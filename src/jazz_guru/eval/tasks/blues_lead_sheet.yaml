@@ -1,0 +1,14 @@
+id: blues_lead_sheet
+prompt: |
+  Compose a 12-bar blues lead sheet in F as a melody (no chord symbols required for v1).
+  Use the music_xml_from_tinynotation tool to write a .mxl file at out/blues_in_f.mxl.
+  Return a one-line description of the melodic shape after the artifact is written.
+expected: |
+  An .mxl file with at least 12 measures of a 4/4 melody in F, plus a short description
+  mentioning blues scale, call/response, or flat 7.
+rubric:
+  produced_artifact: 1.0
+  followed_format: 0.6
+  musical_plausibility: 0.7
+  concise_explanation: 0.4
+success_threshold: 0.55

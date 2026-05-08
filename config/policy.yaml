@@ -1,0 +1,28 @@
+version: 1
+default: allow
+auto_approve: true
+
+tools:
+  fs_read:        { mode: allow }
+  fs_write:       { mode: allow, scope: workspace }
+  fs_list:        { mode: allow }
+  shell:          { mode: allow, timeout_sec: 60 }
+  http_get:       { mode: allow }
+  http_post:      { mode: allow }
+  python_exec:    { mode: allow, timeout_sec: 30, mem_mb: 512 }
+  code_gen:       { mode: allow, scope: workspace }
+  web_search:     { mode: allow }
+  vision:         { mode: allow }
+  audio_analyze:  { mode: allow }
+  music_xml:      { mode: allow }
+  midi:           { mode: allow }
+  render:         { mode: allow }
+  tts:            { mode: allow, feature_flag: FEATURE_TTS }
+
+budgets:
+  per_turn:
+    tool_calls: 32
+    wall_clock_sec: 300
+  per_session:
+    tokens: 2_000_000
+    usd: 10.0

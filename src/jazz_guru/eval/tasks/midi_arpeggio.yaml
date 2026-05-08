@@ -1,0 +1,12 @@
+id: midi_arpeggio
+prompt: |
+  Build a 1-bar piano arpeggio of a Cmaj7 chord at 100 bpm using the midi_from_notes
+  tool. Save it to out/cmaj7_arp.mid. The notes should be C4, E4, G4, B4 each as
+  eighth notes ascending then descending, repeating once.
+expected: |
+  A valid .mid file at out/cmaj7_arp.mid with at least 8 note_on events, channel 0.
+rubric:
+  produced_artifact: 1.0
+  pitch_set_correct: 0.8
+  rhythm_reasonable: 0.5
+success_threshold: 0.55
