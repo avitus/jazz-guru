@@ -19,6 +19,14 @@ tools:
   render:         { mode: allow }
   tts:            { mode: allow, feature_flag: FEATURE_TTS }
 
+  # --- meta-tools: agent-authored tool creation ---------------------------
+  tool_create:           { mode: allow }
+  tool_publish:          { mode: allow }
+  tool_promote_to_source: { mode: allow }
+  tool_remove:           { mode: allow }
+  tool_list_dynamic:     { mode: allow }
+  tool_inspect:          { mode: allow }
+
 budgets:
   per_turn:
     tool_calls: 32

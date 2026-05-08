@@ -135,6 +135,28 @@ class PlaybookEntry(Base):
     )
 
 
+class GeneratedTool(Base):
+    __tablename__ = "generated_tools"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(96), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text)
+    input_schema: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    source: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(String(64))
+    scope: Mapped[str] = mapped_column(String(16), default="global", index=True)
+    owner_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    deprecated: Mapped[bool] = mapped_column(default=False)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class EvalRun(Base):
     __tablename__ = "eval_runs"
 

@@ -8,6 +8,10 @@ from typing import Any
 from sqlalchemy import select
 
 from jazz_guru.actions import ActionController, ToolContext, reset_tool_context, set_tool_context
+from jazz_guru.actions import store as tool_store
+from jazz_guru.actions.dynamic import DynamicRegistry
+from jazz_guru.actions.registry import registry as static_registry
+from jazz_guru.actions.tools.tool_meta import set_event_sink as _set_meta_event_sink
 from jazz_guru.context import BuildInputs, ContextBuilder
 from jazz_guru.db import session_scope
 from jazz_guru.harness.session import SessionHandle
@@ -52,6 +56,7 @@ class AgentLoop:
     ) -> None:
         self.session = session
         self.trace = TraceWriter(session.id)
+        self.dynamic = DynamicRegistry()
         self.controller = controller or ActionController(on_event=self._on_event)
         self.builder = builder or ContextBuilder()
         self.memory = memory or get_memory()
@@ -59,6 +64,16 @@ class AgentLoop:
 
     def _on_event(self, name: str, payload: dict[str, Any]) -> None:
         self.trace.write(name, payload)
+
+    async def _hydrate_dynamic_registry(self) -> None:
+        """Load globally-published tools into this session's dynamic registry."""
+        try:
+            specs = await tool_store.load_all_specs()
+        except Exception as e:
+            log.warning("dynamic_tools.load_failed", err=str(e))
+            return
+        for s in specs:
+            self.dynamic.add(s)
 
     async def _retrieve_memory(self, query: str) -> list[str]:
         try:
@@ -136,11 +151,19 @@ class AgentLoop:
             playbook_excerpts=playbook,
         ))
 
+        await self._hydrate_dynamic_registry()
+        static_registry.attach_dynamic(self.dynamic)
+        # ensure the controller sees the merged set on every step
+        self.controller.allowed = self.controller._allowed_set()
+        _set_meta_event_sink(self._on_event)
+
         tok = set_tool_context(ToolContext(session_id=str(self.session.id), turn_idx=idx))
         try:
             run = await self.controller.run(system=prompt.system, messages=prompt.messages)
         finally:
             reset_tool_context(tok)
+            static_registry.detach_dynamic()
+            _set_meta_event_sink(None)
 
         await self._record_turn(
             idx=idx + 1,

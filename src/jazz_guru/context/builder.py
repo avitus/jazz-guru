@@ -5,6 +5,27 @@ from typing import Any
 
 from jazz_guru.config import GoalConfig, get_goal
 
+_TOOL_CREATION_HINT = """
+---
+## Authoring your own tools
+You can create new tools at runtime when none of the existing ones fit:
+
+- `tool_create(name, description, input_schema, source)` — register a new tool
+  for THIS session. The source must define `def run(**kwargs)` (sync or async),
+  and runs in a sandboxed subprocess (cwd = session workspace) by default.
+  After this returns ok, call the new tool by `name`.
+- `tool_publish(name)` — persist a session tool to the database so it survives
+  restarts and is available to all future sessions.
+- `tool_promote_to_source(name)` — write the tool into the package source tree
+  (Tier 3, requires server restart to take effect).
+- `tool_remove(name, also_global=False)` — drop a tool.
+- `tool_list_dynamic()` / `tool_inspect(name)` — introspection.
+
+Prefer building a small, focused tool over inlining ad hoc python_exec calls
+when the same operation will recur. After creating a tool, immediately call
+it on a sample input to verify it works; iterate if not.
+""".strip()
+
 
 @dataclass
 class Prompt:
@@ -32,6 +53,7 @@ class ContextBuilder:
     def build(self, inputs: BuildInputs) -> Prompt:
         sys_parts: list[str] = []
         sys_parts.append(self.goal.render_system_block())
+        sys_parts.append(_TOOL_CREATION_HINT)
         if inputs.state_doc:
             sys_parts.append("\n---\n## Externalized state (self-model)\n" + inputs.state_doc.strip())
         if inputs.playbook_excerpts:
