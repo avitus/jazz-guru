@@ -177,20 +177,56 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
         return {"results": [{"id": str(r.id), "kind": r.kind, "text": r.text, "score": r.score} for r in recs]}
 
     # ---------- uploads --------------------------------------------------
+    MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MiB; tune if you need more
+
     @app.post("/uploads/{session_id}")
     async def upload(session_id: str, request: Request, name: str | None = None) -> dict[str, Any]:
-        # We avoid Annotated File parameters to keep schema simple; read body bytes.
+        # Streams the request body to disk in chunks so a single large upload
+        # doesn't buffer in worker memory; enforces a hard size cap and
+        # derives the stored filename from a basename-only resolver instead
+        # of brittle string replacement.
         try:
             sid = uuid.UUID(session_id)
         except ValueError as e:
             raise HTTPException(400, f"invalid session id: {e}") from e
-        body = await request.body()
+
         in_dir = _session_dir(sid) / "in"
         in_dir.mkdir(parents=True, exist_ok=True)
-        safe = (name or f"upload_{int(time.time())}.bin").replace("/", "_").replace("..", "_")
-        p = in_dir / safe
-        p.write_bytes(body)
-        return {"path": str(p), "size": len(body), "session_id": str(sid)}
+
+        # Path(...).name strips any directory components, so even an input
+        # like "../../etc/passwd" becomes "passwd"; reject empty / dotfile /
+        # already-traversal-like residues.
+        if name:
+            safe = Path(name).name.lstrip(".") or f"upload_{int(time.time())}.bin"
+        else:
+            safe = f"upload_{int(time.time())}.bin"
+        target = in_dir / safe
+        try:
+            target.relative_to(in_dir.resolve())
+        except ValueError as e:
+            raise HTTPException(400, "filename escapes upload dir") from e
+
+        total = 0
+        try:
+            with target.open("wb") as fh:
+                async for chunk in request.stream():
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > MAX_UPLOAD_BYTES:
+                        fh.close()
+                        target.unlink(missing_ok=True)
+                        raise HTTPException(
+                            413,
+                            f"upload exceeds {MAX_UPLOAD_BYTES} bytes",
+                        )
+                    fh.write(chunk)
+        except HTTPException:
+            raise
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
+        return {"path": str(target), "size": total, "session_id": str(sid)}
 
     # ---------- artifacts ------------------------------------------------
     @app.get("/artifacts/{session_id}")

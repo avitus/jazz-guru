@@ -33,8 +33,24 @@ class VoyageProvider(EmbeddingProvider):
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        res = await self._client.embed(texts=texts, model=self._model, input_type="document")
-        return [list(map(float, e)) for e in res.embeddings]
+        # Pass output_dimension explicitly so the API doesn't quietly hand
+        # us the model's default dimension when settings.embedding_dim is
+        # different — that mismatch would only show up later as a pgvector
+        # "expected N dimensions, not M" error far from the cause.
+        res = await self._client.embed(
+            texts=texts,
+            model=self._model,
+            input_type="document",
+            output_dimension=self._dim,
+        )
+        vectors = [list(map(float, e)) for e in res.embeddings]
+        for i, v in enumerate(vectors):
+            if len(v) != self._dim:
+                raise RuntimeError(
+                    f"Voyage embedding dimension mismatch at index {i}: "
+                    f"model={self._model!r} expected={self._dim} got={len(v)}"
+                )
+        return vectors
 
 
 class HashStubProvider(EmbeddingProvider):

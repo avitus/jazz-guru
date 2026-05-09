@@ -29,6 +29,8 @@ class PiperSynth(SpeechSynthesizer):
     def __init__(self, model_path: str | None = None) -> None:
         self.model_path = model_path
 
+    PIPER_TIMEOUT_SEC = 60
+
     def synth(self, text: str, out_path: Path) -> dict[str, object]:
         piper = shutil.which("piper")
         if not piper:
@@ -36,7 +38,19 @@ class PiperSynth(SpeechSynthesizer):
         cmd = [piper, "--output_file", str(out_path)]
         if self.model_path:
             cmd.extend(["--model", self.model_path])
-        proc = subprocess.run(cmd, input=text.encode("utf-8"), capture_output=True)
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=text.encode("utf-8"),
+                capture_output=True,
+                timeout=self.PIPER_TIMEOUT_SEC,
+            )
+        except subprocess.TimeoutExpired as e:
+            return {
+                "error": "piper timed out",
+                "timeout_sec": self.PIPER_TIMEOUT_SEC,
+                "stderr": (e.stderr or b"").decode("utf-8", errors="replace"),
+            }
         if proc.returncode != 0:
             return {"error": "piper failed", "stderr": proc.stderr.decode("utf-8", errors="replace")}
         return {"path": str(out_path), "engine": "piper"}

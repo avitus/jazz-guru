@@ -40,7 +40,12 @@ class ActionController:
     ) -> None:
         self.registry = registry or register_all()
         self.policy = policy or get_policy()
-        self.max_rounds = max_rounds or self.policy.budgets.per_turn.tool_calls
+        # Decouple tool-call budget from LLM round limit: with a single
+        # combined cap of N, the controller uses one round to call a tool
+        # and then has nothing left for the model to read the result and
+        # produce a final answer.
+        self.max_tool_calls = self.policy.budgets.per_turn.tool_calls
+        self.max_rounds = max_rounds or (self.max_tool_calls + 1)
         self.on_event = on_event  # optional callable(name, payload)
         # Don't cache the allowlist as an attribute. Dynamic tools attach
         # via ContextVar inside AgentLoop.step(); a frozen set here would
@@ -116,8 +121,8 @@ class ActionController:
             tool_results: list[dict[str, Any]] = []
             for tu in resp.tool_uses:
                 tool_calls_so_far = result.tool_calls
-                if tool_calls_so_far >= self.max_rounds:
-                    err = f"tool-call budget exceeded ({self.max_rounds})"
+                if tool_calls_so_far >= self.max_tool_calls:
+                    err = f"tool-call budget exceeded ({self.max_tool_calls})"
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tu["id"],

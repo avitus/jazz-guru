@@ -80,8 +80,11 @@ class ToolCreateInput(BaseModel):
     execution: str = Field(
         "subprocess",
         description=(
-            "'subprocess' (sandboxed, default, recommended) or 'inproc' "
-            "(faster, runs in the server process — only for trusted, fast helpers)."
+            "'subprocess' is the only accepted value. Same-process execution "
+            "would run agent-authored code with the server's full interpreter "
+            "state and OS permissions, bypassing the per-tool isolation "
+            "boundary, so it is no longer permitted from session-authored "
+            "tools."
         ),
     )
 
@@ -110,8 +113,13 @@ async def tool_create(
         validate_source(source)
     except ToolValidationError as e:
         return {"ok": False, "error": str(e)}
-    if execution not in {"subprocess", "inproc"}:
-        return {"ok": False, "error": f"unknown execution mode: {execution}"}
+    if execution != "subprocess":
+        # 'inproc' previously ran agent-authored code inside the server
+        # process. That bypasses the subprocess isolation boundary, so we
+        # disallow it here. The dynamic-tool runner still recognizes the
+        # mode for trusted/internal callers via DynamicSpec.execution, but
+        # nothing in the agent-facing surface should be able to set it.
+        return {"ok": False, "error": f"unsupported execution mode: {execution!r} (only 'subprocess' is allowed)"}
 
     src = textwrap.dedent(source).strip() + "\n"
     sid = current().session_id
@@ -182,7 +190,8 @@ async def tool_publish(name: str, note: str | None = None) -> dict[str, Any]:
     spec = dyn.get(name)
     if spec is None:
         return {"ok": False, "error": f"no session tool '{name}'"}
-    write_global_tool_file(name, spec.source)
+    # DB upsert FIRST: if it fails, we don't want a stale .py file in
+    # generated_tools/ pointing at a tool the registry won't know about.
     try:
         row_id = await store.upsert(
             name=spec.name,
@@ -195,6 +204,7 @@ async def tool_publish(name: str, note: str | None = None) -> dict[str, Any]:
         )
     except Exception as e:
         return {"ok": False, "error": f"db error: {e}"}
+    write_global_tool_file(name, spec.source)
     spec.scope = "global"
     _emit("tool_promoted", {"name": spec.name, "scope": "global", "id": str(row_id)})
     return {"ok": True, "id": str(row_id), "name": spec.name, "scope": "global"}

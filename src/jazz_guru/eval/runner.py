@@ -45,7 +45,18 @@ def load_trace(session_id: str | uuid.UUID) -> list[TraceRecord]:
             log.warning("trace.bad_line", path=str(p), lineno=lineno, err=str(e))
             continue
         try:
-            out.append(TraceRecord(ts=rec["ts"], type=rec["type"], payload=rec.get("payload", {})))
+            payload = rec.get("payload", {})
+            if not isinstance(payload, dict):
+                # summarize_trace assumes payload is a dict for .get(); if a
+                # non-dict slips through (string/array/null) we'd crash later.
+                log.warning(
+                    "trace.bad_payload",
+                    path=str(p),
+                    lineno=lineno,
+                    payload_type=type(payload).__name__,
+                )
+                payload = {}
+            out.append(TraceRecord(ts=rec["ts"], type=rec["type"], payload=payload))
         except KeyError as e:
             log.warning("trace.missing_field", path=str(p), lineno=lineno, missing=str(e))
     return out

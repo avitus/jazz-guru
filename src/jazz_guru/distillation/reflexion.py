@@ -163,8 +163,11 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
         scope = pe.get("scope", "general")
         if not text:
             continue
+        # Coerce defensively — a model value like "n/a" would otherwise
+        # raise here and silently drop an otherwise valid playbook entry.
+        score = max(0.0, min(1.0, _to_float(pe.get("score"), 0.5)))
         try:
-            await upsert_entry(scope, text, score=float(pe.get("score", 0.5)))
+            await upsert_entry(scope, text, score=score)
         except Exception as e:
             log.warning("reflexion.playbook_upsert_failed", err=str(e))
 
