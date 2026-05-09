@@ -260,6 +260,97 @@
 
   ui.rec.addEventListener('click', toggleRecord);
 
+  // ----- column resize gutter ---------------------------------------
+  // Drag (or arrow-key) the divider between chat and panels. Persists the
+  // chat column's px width to localStorage so it survives reloads. Min
+  // widths keep both sides usable on resize/zoom; the CSS media query at
+  // 1100px collapses to a single column and hides the gutter.
+  (() => {
+    const main = document.querySelector('main');
+    const gutter = document.getElementById('gutter');
+    if (!main || !gutter) return;
+
+    const STORE_KEY = 'jg_chat_w_px';
+    const MIN_LEFT = 320;
+    const MIN_RIGHT = 320;
+    const GUTTER_AND_GAPS = 22; // 6px gutter + 2 * 8px gaps
+
+    const clamp = (px) => {
+      const total = main.clientWidth - parseFloat(getComputedStyle(main).paddingLeft) * 2;
+      const max = Math.max(MIN_LEFT, total - GUTTER_AND_GAPS - MIN_RIGHT);
+      return Math.max(MIN_LEFT, Math.min(max, px));
+    };
+    const apply = (px) => { main.style.setProperty('--chat-w', `${px}px`); };
+    const persist = (px) => { try { localStorage.setItem(STORE_KEY, String(px)); } catch {} };
+
+    // Restore prior width if any.
+    const saved = parseFloat(localStorage.getItem(STORE_KEY) || '');
+    if (Number.isFinite(saved) && saved > 0) apply(clamp(saved));
+
+    let dragging = false;
+    let pointerId = null;
+
+    gutter.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== 0 && ev.pointerType === 'mouse') return;
+      dragging = true;
+      pointerId = ev.pointerId;
+      gutter.setPointerCapture(pointerId);
+      gutter.classList.add('dragging');
+      document.body.classList.add('resizing-cols');
+      ev.preventDefault();
+    });
+
+    gutter.addEventListener('pointermove', (ev) => {
+      if (!dragging) return;
+      const rect = main.getBoundingClientRect();
+      const padLeft = parseFloat(getComputedStyle(main).paddingLeft) || 0;
+      const px = clamp(ev.clientX - rect.left - padLeft);
+      apply(px);
+    });
+
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false;
+      gutter.classList.remove('dragging');
+      document.body.classList.remove('resizing-cols');
+      if (pointerId !== null) { try { gutter.releasePointerCapture(pointerId); } catch {} }
+      pointerId = null;
+      // Save current rendered width.
+      const cur = parseFloat(getComputedStyle(main).getPropertyValue('--chat-w'));
+      if (Number.isFinite(cur) && cur > 0) persist(cur);
+    };
+    gutter.addEventListener('pointerup', endDrag);
+    gutter.addEventListener('pointercancel', endDrag);
+
+    // Keyboard nudge for accessibility.
+    gutter.addEventListener('keydown', (ev) => {
+      const step = ev.shiftKey ? 64 : 16;
+      let cur = parseFloat(getComputedStyle(main).getPropertyValue('--chat-w'));
+      if (!Number.isFinite(cur) || cur <= 0) {
+        // No explicit width yet — read the current rendered chat column.
+        const chat = document.querySelector('.chat');
+        cur = chat ? chat.getBoundingClientRect().width : 600;
+      }
+      let next = null;
+      if (ev.key === 'ArrowLeft') next = cur - step;
+      else if (ev.key === 'ArrowRight') next = cur + step;
+      else if (ev.key === 'Home') next = MIN_LEFT;
+      else if (ev.key === 'End') next = clamp(1e6);
+      if (next !== null) {
+        ev.preventDefault();
+        const px = clamp(next);
+        apply(px);
+        persist(px);
+      }
+    });
+
+    // Re-clamp on viewport resize so a saved width can't exceed the new bounds.
+    window.addEventListener('resize', () => {
+      const cur = parseFloat(getComputedStyle(main).getPropertyValue('--chat-w'));
+      if (Number.isFinite(cur) && cur > 0) apply(clamp(cur));
+    });
+  })();
+
   // boot
   (async () => {
     setStatus('connecting…');

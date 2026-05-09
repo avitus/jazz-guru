@@ -41,9 +41,31 @@ button:hover { border-color: var(--accent); }
 
 main {
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: 2fr 1fr; gap: 12px;
+  display: grid;
+  grid-template-columns: var(--chat-w, 2fr) 6px minmax(280px, 1fr);
+  gap: 12px 8px; /* row-gap preserved for mobile two-row layout */
   padding: 12px;
 }
+
+.gutter {
+  align-self: stretch;
+  width: 6px; cursor: col-resize;
+  background: transparent; border-radius: 3px;
+  transition: background-color .12s ease;
+  position: relative;
+  touch-action: none; /* let us own pointer events on touch */
+}
+.gutter:hover, .gutter.dragging, .gutter:focus-visible {
+  background: var(--border);
+  outline: none;
+}
+.gutter.dragging { background: var(--accent); }
+/* widen the hit area without making the visible bar fatter */
+.gutter::after {
+  content: ""; position: absolute; inset: 0 -4px;
+}
+body.resizing-cols { cursor: col-resize; user-select: none; }
+body.resizing-cols * { cursor: col-resize !important; }
 
 .chat { display: flex; flex-direction: column; min-height: 0; }
 .messages {
@@ -106,4 +128,5 @@ main {
 @media (max-width: 1100px) {
   main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
   .panels { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .gutter { display: none; }
 }
