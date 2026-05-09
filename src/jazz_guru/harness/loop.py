@@ -11,7 +11,12 @@ from jazz_guru.actions import ActionController, ToolContext, reset_tool_context,
 from jazz_guru.actions import store as tool_store
 from jazz_guru.actions.dynamic import DynamicRegistry
 from jazz_guru.actions.registry import registry as static_registry
-from jazz_guru.actions.tools.tool_meta import set_event_sink as _set_meta_event_sink
+from jazz_guru.actions.tools.tool_meta import (
+    reset_event_sink as _reset_meta_event_sink,
+)
+from jazz_guru.actions.tools.tool_meta import (
+    set_event_sink as _set_meta_event_sink,
+)
 from jazz_guru.context import BuildInputs, ContextBuilder
 from jazz_guru.db import session_scope
 from jazz_guru.harness.session import SessionHandle
@@ -152,18 +157,20 @@ class AgentLoop:
         ))
 
         await self._hydrate_dynamic_registry()
-        static_registry.attach_dynamic(self.dynamic)
+        # All three of these are per-async-task scoped (ContextVar tokens),
+        # so concurrent turns in the same process don't clobber each other.
+        dyn_token = static_registry.attach_dynamic(self.dynamic)
+        meta_token = _set_meta_event_sink(self._on_event)
         # ensure the controller sees the merged set on every step
         self.controller.allowed = self.controller._allowed_set()
-        _set_meta_event_sink(self._on_event)
 
         tok = set_tool_context(ToolContext(session_id=str(self.session.id), turn_idx=idx))
         try:
             run = await self.controller.run(system=prompt.system, messages=prompt.messages)
         finally:
             reset_tool_context(tok)
-            static_registry.detach_dynamic()
-            _set_meta_event_sink(None)
+            static_registry.detach_dynamic(dyn_token)
+            _reset_meta_event_sink(meta_token)
 
         await self._record_turn(
             idx=idx + 1,

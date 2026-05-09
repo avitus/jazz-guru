@@ -65,7 +65,13 @@
       }
       for (const a of items) {
         const link = document.createElement('a');
-        link.innerHTML = `<span class="size">${fmt(a.size)}</span><span>${a.path}</span>`;
+        const size = document.createElement('span');
+        size.className = 'size';
+        size.textContent = fmt(a.size);
+        const path = document.createElement('span');
+        path.textContent = a.path;
+        link.appendChild(size);
+        link.appendChild(path);
         link.onclick = (ev) => { ev.preventDefault(); openArtifact(a); };
         ui.artifacts.appendChild(link);
       }

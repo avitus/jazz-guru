@@ -245,13 +245,16 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
         loop_ = asyncio.get_running_loop()
 
         def ws_send(name: str, payload: dict[str, Any]) -> None:
-            try:
-                fut = asyncio.run_coroutine_threadsafe(
-                    ws.send_json({"type": name, "payload": payload}), loop_
-                )
-                fut.result(timeout=5.0)
-            except Exception:
-                pass
+            # The controller emits events from inside this same event loop.
+            # Using run_coroutine_threadsafe(...).result() would deadlock the
+            # loop on its own future, so schedule the send and return
+            # immediately. call_soon_threadsafe also keeps this safe if the
+            # caller ever ends up on a different thread.
+            async def _send() -> None:
+                with contextlib.suppress(Exception):
+                    await ws.send_json({"type": name, "payload": payload})
+
+            loop_.call_soon_threadsafe(lambda: loop_.create_task(_send()))
 
         # Fan out controller events to BOTH the trace writer (default sink)
         # and the WS so workspace/traces/<sid>.jsonl is populated for

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -9,6 +10,14 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from jazz_guru.actions.dynamic import DynamicRegistry, DynamicSpec
+
+
+# Per-async-task overlay of dynamic tools on top of the static registry.
+# Concurrent turns (e.g. multiple WS sessions in the same process) each
+# get their own view; mutating a module global here would race.
+_DYNAMIC_OVERLAY: ContextVar[DynamicRegistry | None] = ContextVar(
+    "jg_dynamic_overlay", default=None
+)
 
 ToolHandler = Callable[..., Awaitable[Any]]
 
@@ -32,19 +41,32 @@ class ToolSpec:
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolSpec] = {}
-        self._dynamic: DynamicRegistry | None = None
 
-    def attach_dynamic(self, dyn: DynamicRegistry) -> None:
-        self._dynamic = dyn
+    def attach_dynamic(self, dyn: DynamicRegistry) -> Token[DynamicRegistry | None]:
+        """Bind ``dyn`` as the dynamic overlay for the current async task.
 
-    def detach_dynamic(self) -> None:
-        self._dynamic = None
+        Returns a Token to pass back to :meth:`detach_dynamic`. ContextVar
+        scoping means concurrent tasks each get their own overlay.
+        """
+        return _DYNAMIC_OVERLAY.set(dyn)
+
+    def detach_dynamic(self, token: Token[DynamicRegistry | None] | None = None) -> None:
+        if token is None:
+            _DYNAMIC_OVERLAY.set(None)
+        else:
+            _DYNAMIC_OVERLAY.reset(token)
+
+    def current_dynamic(self) -> DynamicRegistry | None:
+        """Return the dynamic overlay bound for this async task, or None."""
+        return _DYNAMIC_OVERLAY.get()
 
     def _dyn_get(self, name: str) -> DynamicSpec | None:
-        return self._dynamic.get(name) if self._dynamic else None
+        d = _DYNAMIC_OVERLAY.get()
+        return d.get(name) if d else None
 
     def _dyn_names(self) -> list[str]:
-        return self._dynamic.names() if self._dynamic else []
+        d = _DYNAMIC_OVERLAY.get()
+        return d.names() if d else []
 
     def register(
         self,

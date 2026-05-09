@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import textwrap
+from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any
 
@@ -32,21 +33,29 @@ from jazz_guru.logging import get_logger
 
 log = get_logger(__name__)
 
-# Optional event bus (set by AgentLoop on each step). Subprocess-friendly: just
-# a module-level callable; if unset, events are dropped silently.
-_event_sink: Any = None
+# Optional event bus (set by AgentLoop on each step). Per-async-task scope:
+# concurrent turns must not see each other's sinks. Unset → events dropped.
+_EVENT_SINK: ContextVar[Any] = ContextVar("jg_meta_event_sink", default=None)
 
 
-def set_event_sink(fn: Any) -> None:
-    global _event_sink
-    _event_sink = fn
+def set_event_sink(fn: Any) -> Token[Any]:
+    """Bind an event sink for the current async task. Returns a reset Token."""
+    return _EVENT_SINK.set(fn)
+
+
+def reset_event_sink(token: Token[Any] | None) -> None:
+    if token is None:
+        _EVENT_SINK.set(None)
+    else:
+        _EVENT_SINK.reset(token)
 
 
 def _emit(name: str, payload: dict[str, Any]) -> None:
-    if _event_sink is None:
+    sink = _EVENT_SINK.get()
+    if sink is None:
         return
     try:
-        _event_sink(name, payload)
+        sink(name, payload)
     except Exception as e:  # never let event emission break a tool call
         log.warning("tool_meta.emit_failed", err=str(e))
 
@@ -119,9 +128,10 @@ async def tool_create(
         owner_session_id=sid,
         source_path=path,
     )
-    if registry._dynamic is None:
+    dyn = registry.current_dynamic()
+    if dyn is None:
         return {"ok": False, "error": "no dynamic registry attached for this session"}
-    registry._dynamic.add(spec)
+    dyn.add(spec)
     _emit(
         "tool_proposed",
         {
@@ -166,9 +176,10 @@ class ToolPublishInput(BaseModel):
     tags=("meta",),
 )
 async def tool_publish(name: str, note: str | None = None) -> dict[str, Any]:
-    if registry._dynamic is None:
+    dyn = registry.current_dynamic()
+    if dyn is None:
         return {"ok": False, "error": "no dynamic registry attached"}
-    spec = registry._dynamic.get(name)
+    spec = dyn.get(name)
     if spec is None:
         return {"ok": False, "error": f"no session tool '{name}'"}
     write_global_tool_file(name, spec.source)
@@ -252,9 +263,10 @@ _SOURCE_TEMPLATE = textwrap.dedent(
     tags=("meta",),
 )
 async def tool_promote_to_source(name: str, description: str | None = None) -> dict[str, Any]:
-    if registry._dynamic is None:
+    dyn = registry.current_dynamic()
+    if dyn is None:
         return {"ok": False, "error": "no dynamic registry attached"}
-    spec = registry._dynamic.get(name)
+    spec = dyn.get(name)
     if spec is None:
         return {"ok": False, "error": f"no session tool '{name}'"}
     desc = description or spec.description
@@ -299,8 +311,9 @@ class ToolRemoveInput(BaseModel):
 )
 async def tool_remove(name: str, also_global: bool = False) -> dict[str, Any]:
     out: dict[str, Any] = {"ok": True, "name": name}
-    if registry._dynamic is not None:
-        out["session_removed"] = registry._dynamic.remove(name)
+    dyn = registry.current_dynamic()
+    if dyn is not None:
+        out["session_removed"] = dyn.remove(name)
     if also_global:
         try:
             out["global_removed"] = await store.remove(name)
@@ -321,8 +334,9 @@ async def tool_remove(name: str, also_global: bool = False) -> dict[str, Any]:
 )
 async def tool_list_dynamic() -> dict[str, Any]:
     items: list[dict[str, Any]] = []
-    if registry._dynamic is not None:
-        for s in registry._dynamic.all():
+    dyn = registry.current_dynamic()
+    if dyn is not None:
+        for s in dyn.all():
             items.append({
                 "name": s.name,
                 "scope": s.scope,
@@ -345,9 +359,10 @@ class ToolInspectInput(BaseModel):
     tags=("meta",),
 )
 async def tool_inspect(name: str) -> dict[str, Any]:
-    if registry._dynamic is None:
+    dyn = registry.current_dynamic()
+    if dyn is None:
         return {"ok": False, "error": "no dynamic registry attached"}
-    spec = registry._dynamic.get(name)
+    spec = dyn.get(name)
     if spec is None:
         return {"ok": False, "error": f"no dynamic tool '{name}'"}
     return {
