@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     jg_goal_yaml: Path = Path("./config/goal.yaml")
     jg_policy_file: Path = Path("./config/policy.yaml")
 
+    # Instruments / rendering presets
+    jg_instruments_file: Path = Path("./config/instruments.yaml")
+    jg_instruments_root: Path = Path.home() / ".local/share/jazz-guru/instruments"
+
     # Web search
     tavily_api_key: str = ""
 

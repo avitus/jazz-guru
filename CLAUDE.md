@@ -82,6 +82,8 @@ The agent loop is a textbook perceive → plan → act → observe cycle. Stages
 
 - **`memory/`** — pgvector store + history summarizer + Voyage embeddings (with hash-stub fallback when no key is set). Search/write are both async; failures are swallowed and logged so a memory outage does not break a turn.
 
+- **`actions/tools/render.py`** — multi-engine MIDI→audio renderer. Three engines (`fluidsynth` SF2/SF3, `sfizz` SFZ via `sfizz_render`, `liquidsfz` SFZ via `liquidsfz`) plus an ffmpeg post-processing chain (`lowpass`, `vibrato`, `volume`, `loudnorm`). Presets live in **`config/instruments.yaml`** as data — the agent edits that file to add or tune presets, no Python change needed. Library paths in the YAML are resolved against `JG_INSTRUMENTS_ROOT` (default `~/.local/share/jazz-guru/instruments`). Per-render `post_process` overrides only the fields it sets; everything else falls through to preset defaults.
+
 - **`distillation/reflexion.py`** — offline reflexion loop. `run_reflexion(session_id)` summarizes the transcript, prompts Claude (with strict JSON contract) for `{score, critique, revised_plan, open_threads, memory_writes, playbook_entries}`, and writes the durable bits back into memory + the playbook table + a fresh snapshot. Triggered async via Redis/RQ (`reflexion_job`) by `make worker`, or inline via `--sync`.
 
 - **`server.py`** — FastAPI app. Routes: `POST /sessions`, `POST /sessions/{id}/chat`, `WS /ws/sessions/{id}/chat` (streams every controller event over the socket), `POST /sessions/{id}/distill`, `POST /memory/search`, `POST /eval/run`, artifact list/download, file uploads. The HTML UI is served from `src/jazz_guru/web/static/` at `/ui/`.

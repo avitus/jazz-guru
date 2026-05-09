@@ -1,0 +1,116 @@
+# Instrument presets for render_midi.
+#
+# Each preset names an offline rendering engine and the library it should load,
+# plus optional post-processing defaults (applied via ffmpeg). The agent can
+# edit this file directly to add presets or tune defaults; render_midi reloads
+# it on every call.
+#
+# Engines:
+#   fluidsynth  - reads SF2/SF3 (General MIDI). Bundled with FluidSynth.
+#   sfizz       - reads SFZ via the `sfizz_render` CLI (offline render).
+#                 Install: build sfizz from https://github.com/sfztools/sfizz
+#                 with -DSFIZZ_RENDER=ON, or use a distro that ships
+#                 sfizz_render (some Linux packages do).
+#   liquidsfz   - reads SFZ via `liquidsfz --no-jack --render`. `brew install
+#                 liquidsfz` works on macOS but check that your build supports
+#                 --render (older builds are JACK-only).
+#
+# Library paths:
+#   - Absolute paths are used as-is.
+#   - Relative paths are resolved against $JG_INSTRUMENTS_ROOT (default
+#     ~/.local/share/jazz-guru/instruments). Drop downloaded libraries there.
+#
+# post (optional) — defaults applied unless the caller overrides via the
+# render_midi `post_process` arg. ffmpeg filter cheatsheet:
+#   lowpass_hz       — second-order lowpass at this frequency (warmth)
+#   lowpass_q        — Q for the lowpass (default 0.7, gentle slope)
+#   vibrato_hz       — pitch wobble rate; 0 disables
+#   vibrato_depth    — depth in 0.0–1.0 (ffmpeg's vibrato `d`); ~0.05 is subtle
+#   gain_db          — output gain in dB
+#   normalize        — true/false; runs `loudnorm` if true
+
+version: 1
+default: gm-fluidsynth
+
+presets:
+  # The current default behavior. Uses FLUIDSYNTH_SOUNDFONT from .env when
+  # `library` is null.
+  gm-fluidsynth:
+    engine: fluidsynth
+    library: null
+    description: General MIDI via FluidSynth. Configure FLUIDSYNTH_SOUNDFONT in .env.
+    post:
+      lowpass_hz: 6500
+      lowpass_q: 0.7
+      gain_db: 0
+      normalize: false
+
+  # MTG Solo Sax (CC-BY 4.0, https://github.com/sfzinstruments/MTG.SoloSax).
+  # Recorded with U87, 24/48 — the same library mankunku uses.
+  # `git clone --depth 1` it under $JG_INSTRUMENTS_ROOT/mtg-solo-sax/.
+  # Each instrument has two variants: looped (default, smoother sustain) and
+  # `(NL)` no-loop (raw recordings).
+  tenor-sax-mtg:
+    engine: sfizz
+    library: "mtg-solo-sax/MTG Solo Saxophones/MTG Tenor Sax.sfz"
+    description: MTG Solo Sax (tenor) — multisampled, velocity-layered.
+    post:
+      lowpass_hz: 4500
+      lowpass_q: 0.7
+      vibrato_hz: 4.8
+      vibrato_depth: 0.05
+      gain_db: 0
+      normalize: true
+
+  alto-sax-mtg:
+    engine: sfizz
+    library: "mtg-solo-sax/MTG Solo Saxophones/MTG Alto Sax.sfz"
+    description: MTG Solo Sax (alto).
+    post:
+      lowpass_hz: 5200
+      lowpass_q: 0.7
+      vibrato_hz: 5.0
+      vibrato_depth: 0.05
+      normalize: true
+
+  soprano-sax-mtg:
+    engine: sfizz
+    library: "mtg-solo-sax/MTG Solo Saxophones/MTG Soprano Sax.sfz"
+    description: MTG Solo Sax (soprano).
+    post:
+      lowpass_hz: 6000
+      vibrato_hz: 5.0
+      vibrato_depth: 0.04
+      normalize: true
+
+  baritone-sax-mtg:
+    engine: sfizz
+    library: "mtg-solo-sax/MTG Solo Saxophones/MTG Baritone Sax.sfz"
+    description: MTG Solo Sax (baritone).
+    post:
+      lowpass_hz: 3800
+      vibrato_hz: 4.5
+      vibrato_depth: 0.05
+      normalize: true
+
+  # Salamander Grand Piano V3 (CC-BY 3.0).
+  # Mirror: https://github.com/sfzinstruments/SalamanderGrandPiano
+  salamander-piano:
+    engine: sfizz
+    library: salamander/SalamanderGrandPianoV3.sfz
+    description: Salamander Grand Piano V3.
+    post:
+      lowpass_hz: 12000
+      gain_db: 0
+      normalize: true
+
+  # Smolken Pizzicato Bass (CC-BY 4.0).
+  # https://github.com/sfzinstruments/Smolken-pizzicato-double-bass
+  upright-bass-smolken:
+    engine: sfizz
+    library: smolken-bass/SmolkenPizzBass.sfz
+    description: Smolken Pizzicato double-bass.
+    post:
+      lowpass_hz: 3500
+      gain_db: 0
+      normalize: true
