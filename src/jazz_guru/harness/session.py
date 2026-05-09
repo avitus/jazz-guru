@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy import select
 
@@ -17,6 +18,26 @@ class SessionHandle:
     title: str | None = None
     next_turn_idx: int = 0
     history: list[dict[str, object]] = field(default_factory=list)
+
+
+def row_to_api_message(role: str, content: Any) -> dict[str, Any] | None:
+    """Reshape a persisted Turn into an Anthropic-API message dict.
+
+    The DB stores ``Turn.content`` as a JSON object like ``{"text": "..."}``
+    for record-keeping; the API expects ``content`` to be a string or a list
+    of content blocks. Returns None for rows we cannot or should not replay
+    (non-user/assistant roles, missing text, etc.). Tool_use / tool_result
+    chains from prior turns are not persisted in API shape, so they aren't
+    replayed; the agent's cross-turn memory of tool calls is the snapshot,
+    playbook, and memory store, not the message history.
+    """
+    if role not in ("user", "assistant"):
+        return None
+    d = content if isinstance(content, dict) else {}
+    text = str(d.get("text", "")).strip()
+    if not text:
+        return None
+    return {"role": role, "content": text}
 
 
 class SessionManager:
@@ -44,7 +65,7 @@ class SessionManager:
                 next_turn_idx=(turns[-1].idx + 1) if turns else 0,
             )
             for t in turns:
-                handle.history.append(
-                    {"role": t.role, "content": t.content, "idx": t.idx}
-                )
+                msg = row_to_api_message(t.role, t.content)
+                if msg:
+                    handle.history.append(msg)
             return handle

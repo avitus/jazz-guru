@@ -155,7 +155,9 @@
       logEvent('llm', `final  tools=${evt.tool_calls}  in=${u.input_tokens} out=${u.output_tokens}  $${cost}`);
       refreshArtifacts();
     } else if (t === 'error') {
-      logEvent('error', evt.error || 'error');
+      const msg = evt.error || (evt.payload && evt.payload.error) || 'error';
+      const phase = evt.payload && evt.payload.phase;
+      logEvent('error', phase ? `${phase}: ${msg}` : msg);
     }
   }
 

@@ -16,7 +16,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from jazz_guru import auth
-from jazz_guru.actions import ActionController
 from jazz_guru.config import get_goal, get_settings
 from jazz_guru.distillation import enqueue_reflexion, run_reflexion
 from jazz_guru.eval import run_all
@@ -245,7 +244,7 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
         handle = await sm.load(sid)
         loop_ = asyncio.get_running_loop()
 
-        def on_event(name: str, payload: dict[str, Any]) -> None:
+        def ws_send(name: str, payload: dict[str, Any]) -> None:
             try:
                 fut = asyncio.run_coroutine_threadsafe(
                     ws.send_json({"type": name, "payload": payload}), loop_
@@ -254,8 +253,19 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
             except Exception:
                 pass
 
-        controller = ActionController(on_event=on_event)
-        agent = AgentLoop(handle, controller=controller)
+        # Fan out controller events to BOTH the trace writer (default sink)
+        # and the WS so workspace/traces/<sid>.jsonl is populated for
+        # web-driven sessions, not only CLI-driven ones.
+        agent = AgentLoop(handle)
+        trace_sink = agent._on_event
+
+        def fanout(name: str, payload: dict[str, Any]) -> None:
+            with contextlib.suppress(Exception):
+                trace_sink(name, payload)
+            ws_send(name, payload)
+
+        agent._on_event = fanout  # type: ignore[method-assign]
+        agent.controller.on_event = fanout
         try:
             while True:
                 raw = await ws.receive_text()
