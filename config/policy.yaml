@@ -16,7 +16,7 @@ tools:
   audio_analyze:  { mode: allow }
   music_xml:      { mode: allow }
   midi:           { mode: allow }
-  render:         { mode: allow }
+  render_midi:    { mode: allow }
   tts:            { mode: allow, feature_flag: FEATURE_TTS }
 
   # --- meta-tools: agent-authored tool creation ---------------------------

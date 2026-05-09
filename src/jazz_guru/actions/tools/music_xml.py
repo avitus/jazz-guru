@@ -88,6 +88,7 @@ async def music_xml_transpose(in_path: str, out_path: str, interval: str) -> dic
     m21 = _import_music21()
     pin = resolve_in_workspace(in_path, current().session_id)
     pout = resolve_in_workspace(out_path, current().session_id)
+    pout.parent.mkdir(parents=True, exist_ok=True)
     score = m21.converter.parse(str(pin))
     transposed = score.transpose(interval)
     fmt = "mxl" if Path(pout).suffix.lower() == ".mxl" else "musicxml"

@@ -34,16 +34,27 @@ def load_trace(session_id: str | uuid.UUID) -> list[TraceRecord]:
     if not p.exists():
         return []
     out: list[TraceRecord] = []
-    for line in p.read_text(encoding="utf-8").splitlines():
+    for lineno, line in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
-        rec = json.loads(line)
-        out.append(TraceRecord(ts=rec["ts"], type=rec["type"], payload=rec.get("payload", {})))
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError as e:
+            # A single corrupt line shouldn't abort the whole replay; trace
+            # writers can be interrupted mid-write or get truncated.
+            log.warning("trace.bad_line", path=str(p), lineno=lineno, err=str(e))
+            continue
+        try:
+            out.append(TraceRecord(ts=rec["ts"], type=rec["type"], payload=rec.get("payload", {})))
+        except KeyError as e:
+            log.warning("trace.missing_field", path=str(p), lineno=lineno, missing=str(e))
     return out
 
 
-def summarize_trace(records: list[TraceRecord]) -> TraceSummary:
-    sid = ""
+def summarize_trace(
+    records: list[TraceRecord],
+    session_id: str | uuid.UUID = "",
+) -> TraceSummary:
     turns = 0
     tool_calls = 0
     final_text = ""
@@ -58,5 +69,9 @@ def summarize_trace(records: list[TraceRecord]) -> TraceSummary:
         elif r.type == "error":
             errors.append(r.payload.get("error", ""))
     return TraceSummary(
-        session_id=sid, turns=turns, tool_calls=tool_calls, final_text=final_text, errors=errors
+        session_id=str(session_id),
+        turns=turns,
+        tool_calls=tool_calls,
+        final_text=final_text,
+        errors=errors,
     )

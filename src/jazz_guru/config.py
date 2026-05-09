@@ -178,3 +178,15 @@ def get_goal() -> GoalConfig:
 @lru_cache(maxsize=1)
 def get_policy() -> Policy:
     return load_policy(get_settings())
+
+
+def clear_config_caches() -> None:
+    """Drop all three config caches so a long-running process re-reads .env + YAML.
+
+    Settings / goal / policy are cached independently; clearing only one
+    leaves the others stale. Use this from anything that mutates ``.env``
+    or the YAML files in a live server/worker.
+    """
+    get_settings.cache_clear()
+    get_goal.cache_clear()
+    get_policy.cache_clear()

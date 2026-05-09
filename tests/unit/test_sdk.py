@@ -6,7 +6,6 @@ import pytest
 from jazz_guru.client.sdk import JazzGuruClient, ServerError
 
 
-@pytest.mark.asyncio
 async def test_health_round_trip() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/health"
@@ -22,7 +21,6 @@ async def test_health_round_trip() -> None:
         await c.close()
 
 
-@pytest.mark.asyncio
 async def test_create_session_and_chat_returns_typed() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/sessions":
@@ -54,7 +52,6 @@ async def test_create_session_and_chat_returns_typed() -> None:
         await c.close()
 
 
-@pytest.mark.asyncio
 async def test_server_error_raises_typed() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, text="boom")
@@ -70,7 +67,6 @@ async def test_server_error_raises_typed() -> None:
         await c.close()
 
 
-@pytest.mark.asyncio
 async def test_api_key_header_is_attached() -> None:
     seen: dict[str, str] = {}
 
@@ -79,7 +75,9 @@ async def test_api_key_header_is_attached() -> None:
         return httpx.Response(200, json={"status": "ok"})
 
     c = JazzGuruClient("http://test", api_key="test-placeholder-xxxxxxxx")
-    c._client = httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(handler), headers=c._headers())
+    c._client = httpx.AsyncClient(
+        base_url="http://test", transport=httpx.MockTransport(handler), headers=c._headers()
+    )
     try:
         await c.health()
         assert seen.get("x-api-key") == "test-placeholder-xxxxxxxx"

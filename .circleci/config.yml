@@ -38,9 +38,12 @@ jobs:
             .venv/bin/pip install -e ".[dev]"
 
       - save_cache:
+          # Cache only the pip wheel cache, not the venv itself: cached
+          # `.venv` directories can become brittle across base-image or
+          # python patch updates (paths embedded in shebangs / .pyc, etc.).
+          # Wheels are portable enough and re-installs are fast.
           key: v1-pip-{{ checksum "pyproject.toml" }}
           paths:
-            - .venv
             - ~/.cache/pip
 
       - run:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import subprocess
 from abc import ABC, abstractmethod
@@ -62,4 +63,6 @@ class TtsInput(BaseModel):
 async def tts(text: str, out_path: str) -> dict[str, object]:
     p = resolve_in_workspace(out_path, current().session_id)
     p.parent.mkdir(parents=True, exist_ok=True)
-    return get_synth().synth(text, p)
+    # The synth implementations are sync (subprocess.run, file writes); push
+    # them off the event loop so concurrent turns aren't blocked.
+    return await asyncio.to_thread(get_synth().synth, text, p)

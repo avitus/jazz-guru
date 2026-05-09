@@ -169,7 +169,10 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
 
     @app.post("/memory/search")
     async def memory_search(body: MemorySearchBody) -> dict[str, object]:
-        sid = uuid.UUID(body.session_id) if body.session_id else None
+        try:
+            sid = uuid.UUID(body.session_id) if body.session_id else None
+        except ValueError as e:
+            raise HTTPException(400, f"invalid session_id: {e}") from e
         recs = await get_memory().search(body.query, k=body.k, session_id=sid)
         return {"results": [{"id": str(r.id), "kind": r.kind, "text": r.text, "score": r.score} for r in recs]}
 

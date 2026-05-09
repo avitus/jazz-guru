@@ -139,7 +139,7 @@ class AgentLoop:
         idx = self.session.next_turn_idx
         log.info("agent_loop.step", session_id=str(self.session.id), idx=idx)
         self.trace.write("turn_start", {"idx": idx, "input": user_input})
-        await log_event(session_id=self.session.id, type=EventType.TURN_START.value,
+        await log_event(session_id=self.session.id, event_type=EventType.TURN_START.value,
                         payload={"idx": idx, "input": user_input})
 
         user_turn_id = await self._record_turn(idx=idx, role="user", content={"text": user_input})
@@ -157,12 +157,12 @@ class AgentLoop:
         ))
 
         await self._hydrate_dynamic_registry()
-        # All three of these are per-async-task scoped (ContextVar tokens),
-        # so concurrent turns in the same process don't clobber each other.
+        # Per-async-task scoped (ContextVar tokens), so concurrent turns in
+        # the same process don't clobber each other. The controller now
+        # recomputes its allowlist inside run(), so dynamic tools attached
+        # here automatically appear there — no explicit push needed.
         dyn_token = static_registry.attach_dynamic(self.dynamic)
         meta_token = _set_meta_event_sink(self._on_event)
-        # ensure the controller sees the merged set on every step
-        self.controller.allowed = self.controller._allowed_set()
 
         tok = set_tool_context(ToolContext(session_id=str(self.session.id), turn_idx=idx))
         try:
@@ -208,7 +208,7 @@ class AgentLoop:
         except Exception as e:
             log.warning("snapshot.write_failed", err=str(e))
 
-        await log_event(session_id=self.session.id, type=EventType.TURN_END.value,
+        await log_event(session_id=self.session.id, event_type=EventType.TURN_END.value,
                         payload={"idx": idx, "tool_calls": run.tool_calls, "rounds": run.rounds})
         self.trace.write("turn_end", {"idx": idx, "text": run.final_text, "tool_calls": run.tool_calls})
 

@@ -170,10 +170,14 @@
   async function sendMessage(text) {
     if (!text.trim()) return;
     if (!sessionId) await ensureSession();
-    if (!ws || ws.readyState !== 1) connectWs();
-    if (!ws || ws.readyState !== 1) {
-      // wait briefly for connect
+    if (!ws || ws.readyState !== WebSocket.OPEN) connectWs();
+    // wait up to ~3s for the connection to actually open before giving up
+    for (let i = 0; i < 10 && (!ws || ws.readyState === WebSocket.CONNECTING); i++) {
       await new Promise((r) => setTimeout(r, 300));
+    }
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      logEvent('error', 'cannot send: websocket not open');
+      return;
     }
     logMsg('user', text);
     ws.send(JSON.stringify({ message: text }));

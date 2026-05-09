@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import mimetypes
 
@@ -27,7 +28,8 @@ async def vision(path: str, question: str = "Describe this image in detail.") ->
     media_type = mimetypes.guess_type(str(p))[0] or "image/png"
     if media_type not in {"image/png", "image/jpeg", "image/gif", "image/webp"}:
         return {"error": f"unsupported media type: {media_type}"}
-    b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+    raw = await asyncio.to_thread(p.read_bytes)
+    b64 = base64.b64encode(raw).decode("ascii")
     msg = [
         {
             "role": "user",

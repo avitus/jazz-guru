@@ -15,10 +15,16 @@ def _api_key() -> str | None:
     return v or None
 
 
+_EXEMPT_EXACT = {
+    "/", "/health", "/docs", "/redoc", "/openapi.json", "/favicon.ico",
+    "/ui", "/static",
+}
+
+
 def _exempt(path: str) -> bool:
-    return path in {"/", "/health", "/docs", "/redoc", "/openapi.json", "/favicon.ico"} or path.startswith(
-        ("/ui", "/static")
-    )
+    # Exact-match the bare paths plus prefix-match the trailing-slash variants
+    # so we don't accidentally exempt e.g. /uiadmin.
+    return path in _EXEMPT_EXACT or path.startswith(("/ui/", "/static/"))
 
 
 def install(app: FastAPI) -> None:
@@ -31,7 +37,11 @@ def install(app: FastAPI) -> None:
             return await call_next(request)
         if _exempt(request.url.path):
             return await call_next(request)
-        provided = request.headers.get("x-api-key") or request.query_params.get("key")
+        # HTTP clients must send the key in the X-API-Key header — query
+        # params end up in proxy logs and browser history. WebSocket auth
+        # is handled separately via `require_ws()`, where a query-string
+        # token is the only practical option.
+        provided = request.headers.get("x-api-key")
         if provided != expected:
             return JSONResponse(
                 {"detail": "missing or invalid x-api-key"},

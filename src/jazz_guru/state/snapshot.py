@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -38,13 +39,19 @@ async def write_snapshot(
     turn_idx: int | None = None,
 ) -> Path:
     base = snapshot_dir(session_id)
-    label = f"turn_{turn_idx:05d}" if turn_idx is not None else datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    if turn_idx is not None:
+        label = f"turn_{turn_idx:05d}"
+    else:
+        # Microsecond precision + uuid suffix prevents within-second collisions
+        # if write_snapshot is called multiple times in tight succession.
+        label = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ") + f"_{uuid.uuid4().hex[:8]}"
     path = base / f"{label}.json"
     raw = json.dumps(payload, indent=2, default=_default).encode("utf-8")
-    path.write_bytes(raw)
+    # File I/O off the event loop.
+    await asyncio.to_thread(path.write_bytes, raw)
     sha = hashlib.sha256(raw).hexdigest()
     async with session_scope() as s:
         s.add(Snapshot(session_id=session_id, turn_id=turn_id, path=str(path), sha256=sha))
     latest = base / "latest.json"
-    latest.write_bytes(raw)
+    await asyncio.to_thread(latest.write_bytes, raw)
     return path

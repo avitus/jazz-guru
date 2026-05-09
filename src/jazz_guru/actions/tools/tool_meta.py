@@ -239,13 +239,12 @@ _SOURCE_TEMPLATE = textwrap.dedent(
         tags=("generated",),
     )
     async def _auto_{name}(**kwargs: Any) -> Any:  # type: ignore[no-untyped-def]
+        import inspect
         result = run(**kwargs)
-        try:
-            import inspect
-            if inspect.iscoroutine(result):
-                result = await result
-        except Exception:
-            pass
+        if inspect.iscoroutine(result):
+            # Don't swallow exceptions raised by the user's run() — let them
+            # propagate so the controller can surface them as tool errors.
+            result = await result
         return result
     '''
 )

@@ -44,9 +44,10 @@ def test_protected_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
     # with header
     r = client.get("/sessions", headers={"x-api-key": "topsecret"})
     assert r.status_code == 200
-    # with query param
+    # query-param keys are no longer accepted on HTTP (proxy logs / browser
+    # history hygiene); WebSocket auth is separate and still uses query.
     r = client.get("/sessions?key=topsecret")
-    assert r.status_code == 200
+    assert r.status_code == 401
     # wrong key
     r = client.get("/sessions", headers={"x-api-key": "nope"})
     assert r.status_code == 401

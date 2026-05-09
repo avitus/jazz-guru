@@ -14,7 +14,9 @@ import sqlalchemy as sa
 ${imports if imports else ""}
 
 revision: str = ${repr(up_revision)}
-down_revision: Union[str, None] = ${repr(down_revision)}
+# Merge migrations have a tuple/sequence of parent revisions, so the type
+# must accept that — `Union[str, None]` would reject those.
+down_revision: Union[str, Sequence[str], None] = ${repr(down_revision)}
 branch_labels: Union[str, Sequence[str], None] = ${repr(branch_labels)}
 depends_on: Union[str, Sequence[str], None] = ${repr(depends_on)}
 

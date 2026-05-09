@@ -36,7 +36,15 @@ def load_latest(session_id: uuid.UUID) -> dict[str, Any] | None:
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError) as e:
+        # Distinguish "no snapshot yet" (return None above) from "snapshot
+        # exists but is unreadable / corrupt" — the latter is worth seeing
+        # in logs so a bad write doesn't silently shadow real state.
+        from jazz_guru.logging import get_logger
+
+        get_logger(__name__).warning(
+            "snapshot.load_failed", session_id=str(session_id), err=str(e)
+        )
         return None
 
 

@@ -170,7 +170,7 @@ def _runner_template() -> str:
             try:
                 result = run(**payload)
                 if inspect.iscoroutine(result):
-                    result = asyncio.get_event_loop().run_until_complete(result)
+                    result = asyncio.run(result)
             except Exception as e:
                 print(json.dumps({{
                     "__error__": f"{{type(e).__name__}}: {{e}}",

@@ -70,6 +70,18 @@ class HashStubProvider(EmbeddingProvider):
 @lru_cache(maxsize=1)
 def get_embeddings() -> EmbeddingProvider:
     s = get_settings()
-    if s.embedding_provider == "voyage" and s.voyage_api_key:
-        return VoyageProvider()
-    return HashStubProvider()
+    provider = (s.embedding_provider or "").lower()
+    if provider == "voyage":
+        if s.voyage_api_key:
+            return VoyageProvider()
+        # Fall through to the hash stub silently only when the operator did
+        # not pick a real provider. If they did pick one, treat the missing
+        # key as a configuration error so the system doesn't quietly run
+        # with non-comparable hash-stub embeddings.
+        raise RuntimeError(
+            "EMBEDDING_PROVIDER=voyage but VOYAGE_API_KEY is unset. "
+            "Set the key, or set EMBEDDING_PROVIDER=hash for the offline stub."
+        )
+    if provider in ("", "hash", "stub", "none"):
+        return HashStubProvider()
+    raise RuntimeError(f"unknown EMBEDDING_PROVIDER: {s.embedding_provider!r}")

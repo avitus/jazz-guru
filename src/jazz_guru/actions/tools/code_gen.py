@@ -43,6 +43,12 @@ async def code_gen(path: str, content: str, overwrite: bool = True) -> dict[str,
 )
 async def code_edit(path: str, old_str: str, new_str: str, change_all: bool = False) -> dict[str, object]:
     p = resolve_in_workspace(path, current().session_id)
+    if not old_str:
+        # str.count("") returns len(text)+1 — an empty old_str would silently
+        # become an insert-at-every-boundary operation. Refuse it.
+        return {"path": str(p), "edited": False, "reason": "old_str must not be empty"}
+    if not p.exists():
+        return {"path": str(p), "edited": False, "reason": "missing file"}
     text = p.read_text(encoding="utf-8")
     count = text.count(old_str)
     if count == 0:

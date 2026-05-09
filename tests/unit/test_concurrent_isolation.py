@@ -5,11 +5,10 @@ then await across a yield point. Each must see *only* its own bindings,
 not the other task's. Before the ContextVar refactor, both bindings were
 module-global and would clobber each other.
 """
+
 from __future__ import annotations
 
 import asyncio
-
-import pytest
 
 from jazz_guru.actions.dynamic import DynamicRegistry, DynamicSpec, hash_source
 from jazz_guru.actions.registry import registry
@@ -27,7 +26,6 @@ def _spec(name: str) -> DynamicSpec:
     )
 
 
-@pytest.mark.asyncio
 async def test_dynamic_overlay_isolated_across_tasks() -> None:
     # Use a unique prefix that won't collide with the static meta-tool
     # names (tool_create, tool_publish, …) registered in this process.
@@ -51,7 +49,6 @@ async def test_dynamic_overlay_isolated_across_tasks() -> None:
     assert registry.current_dynamic() is None
 
 
-@pytest.mark.asyncio
 async def test_meta_event_sink_isolated_across_tasks() -> None:
     async def task(label: str) -> list[tuple[str, str]]:
         events: list[tuple[str, str]] = []

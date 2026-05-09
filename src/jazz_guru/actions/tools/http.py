@@ -107,9 +107,17 @@ async def _request_with_validation(
     params: dict[str, str] | None = None,
     json_body: dict[str, Any] | None = None,
     data: dict[str, Any] | None = None,
+    max_bytes: int = 500_000,
     client: httpx.AsyncClient | None = None,
-) -> httpx.Response:
-    """GET/POST helper that validates every hop including redirect targets."""
+) -> dict[str, object]:
+    """Validate every hop (including redirects) and stream up to max_bytes.
+
+    Returns a dict shaped like ``_format_response``. Streaming lets us stop
+    reading the wire once we've accumulated ``max_bytes`` raw bytes, which
+    is the only honest way to enforce the cap — the previous ``r.text[:N]``
+    approach buffered the whole body in memory and counted *characters*,
+    not bytes.
+    """
     cur_method = method
     cur_url = url
     cur_json: dict[str, Any] | None = json_body
@@ -119,24 +127,50 @@ async def _request_with_validation(
     try:
         for _ in range(_MAX_REDIRECTS + 1):
             _validate_url(cur_url)
-            r = await c.request(
+            req = c.build_request(
                 cur_method, cur_url,
                 headers=headers, params=params,
                 json=cur_json, data=cur_data,
             )
-            if not (300 <= r.status_code < 400):
-                return r
-            loc = r.headers.get("location")
-            if not loc:
-                return r
-            # Resolve relative redirects against the current URL.
-            cur_url = str(httpx.URL(cur_url).join(loc))
-            # Per RFC 7231 / 7538: 301/302/303 redirect bodies are dropped
-            # and the method becomes GET; 307/308 preserve method + body.
-            if r.status_code not in (307, 308):
-                cur_method = "GET"
-                cur_json = None
-                cur_data = None
+            r = await c.send(req, stream=True)
+            try:
+                if 300 <= r.status_code < 400:
+                    loc = r.headers.get("location")
+                    if loc:
+                        await r.aclose()
+                        cur_url = str(httpx.URL(cur_url).join(loc))
+                        if r.status_code not in (307, 308):
+                            cur_method = "GET"
+                            cur_json = None
+                            cur_data = None
+                        continue
+                # Terminal hop — read up to max_bytes.
+                buf = bytearray()
+                truncated = False
+                async for chunk in r.aiter_bytes():
+                    remaining = max_bytes - len(buf)
+                    if remaining <= 0:
+                        truncated = True
+                        break
+                    if len(chunk) > remaining:
+                        buf.extend(chunk[:remaining])
+                        truncated = True
+                        break
+                    buf.extend(chunk)
+                encoding = r.encoding or "utf-8"
+                try:
+                    text = buf.decode(encoding, errors="replace")
+                except (LookupError, UnicodeDecodeError):
+                    text = buf.decode("utf-8", errors="replace")
+                return {
+                    "status_code": r.status_code,
+                    "headers": dict(r.headers),
+                    "body": text,
+                    "truncated": truncated,
+                    "final_url": str(r.request.url),
+                }
+            finally:
+                await r.aclose()
         raise BlockedTargetError(f"exceeded {_MAX_REDIRECTS} redirects")
     finally:
         if owns_client:
@@ -161,16 +195,6 @@ class HttpPostInput(BaseModel):
     max_bytes: int = 500_000
 
 
-def _format_response(r: httpx.Response, max_bytes: int) -> dict[str, object]:
-    return {
-        "status_code": r.status_code,
-        "headers": dict(r.headers),
-        "body": r.text[:max_bytes],
-        "truncated": len(r.text) > max_bytes,
-        "final_url": str(r.request.url),
-    }
-
-
 def _format_error(e: BlockedTargetError) -> dict[str, object]:
     return {"error": "blocked", "reason": str(e)}
 
@@ -192,10 +216,11 @@ async def http_get(
     max_bytes: int = 500_000,
 ) -> dict[str, object]:
     try:
-        r = await _request_with_validation("GET", url, headers=headers, params=params)
+        return await _request_with_validation(
+            "GET", url, headers=headers, params=params, max_bytes=max_bytes,
+        )
     except BlockedTargetError as e:
         return _format_error(e)
-    return _format_response(r, max_bytes)
 
 
 @registry.register(
@@ -215,9 +240,9 @@ async def http_post(
     max_bytes: int = 500_000,
 ) -> dict[str, object]:
     try:
-        r = await _request_with_validation(
+        return await _request_with_validation(
             "POST", url, headers=headers, json_body=json_body, data=data,
+            max_bytes=max_bytes,
         )
     except BlockedTargetError as e:
         return _format_error(e)
-    return _format_response(r, max_bytes)

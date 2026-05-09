@@ -10,12 +10,12 @@ from jazz_guru.state.schema import Event
 async def log_event(
     *,
     session_id: uuid.UUID,
-    type: str,
+    event_type: str,
     payload: dict[str, Any],
     turn_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     async with session_scope() as s:
-        ev = Event(session_id=session_id, turn_id=turn_id, type=type, payload=payload)
+        ev = Event(session_id=session_id, turn_id=turn_id, type=event_type, payload=payload)
         s.add(ev)
         await s.flush()
         return ev.id

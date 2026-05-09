@@ -118,14 +118,33 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
         log.warning("reflexion.parse_failed", err=str(e), text=resp.text[:300])
         data = {"score": 0.0, "critique": resp.text[:500], "revised_plan": ""}
 
+    # Validate and normalize: a parseable-but-malformed model response can
+    # break the strict coercions below (e.g. score="n/a" -> ValueError) or
+    # silently corrupt state (e.g. open_threads="foo" -> ["f","o","o"]).
+    def _to_float(v: Any, default: float) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    def _to_str_list(v: Any) -> list[str]:
+        if isinstance(v, list):
+            return [str(x) for x in v]
+        return []
+
+    def _to_dict_list(v: Any) -> list[dict[str, Any]]:
+        if isinstance(v, list):
+            return [x for x in v if isinstance(x, dict)]
+        return []
+
     result = ReflectionResult(
         session_id=session_id,
-        score=float(data.get("score", 0.0)),
-        critique=str(data.get("critique", "")),
-        revised_plan=str(data.get("revised_plan", "")),
-        open_threads=list(data.get("open_threads", [])),
-        memory_writes=list(data.get("memory_writes", [])),
-        playbook_entries=list(data.get("playbook_entries", [])),
+        score=max(0.0, min(1.0, _to_float(data.get("score"), 0.0))),
+        critique=str(data.get("critique", "") or ""),
+        revised_plan=str(data.get("revised_plan", "") or ""),
+        open_threads=_to_str_list(data.get("open_threads")),
+        memory_writes=_to_dict_list(data.get("memory_writes")),
+        playbook_entries=_to_dict_list(data.get("playbook_entries")),
         raw=data,
     )
 
@@ -165,7 +184,7 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
 
     await log_event(
         session_id=session_id,
-        type=EventType.REFLEXION.value,
+        event_type=EventType.REFLEXION.value,
         payload={
             "score": result.score,
             "critique": result.critique[:500],

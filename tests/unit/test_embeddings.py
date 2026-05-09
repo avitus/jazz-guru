@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import pytest
-
 from jazz_guru.memory.embeddings import HashStubProvider
 
 
-@pytest.mark.asyncio
 async def test_hash_stub_provides_unit_norm_vectors() -> None:
     p = HashStubProvider(dim=64)
     vecs = await p.embed(["hello", "world"])
@@ -16,7 +13,6 @@ async def test_hash_stub_provides_unit_norm_vectors() -> None:
         assert abs(norm - 1.0) < 1e-6
 
 
-@pytest.mark.asyncio
 async def test_hash_stub_deterministic() -> None:
     p = HashStubProvider(dim=32)
     a = (await p.embed(["foo"]))[0]

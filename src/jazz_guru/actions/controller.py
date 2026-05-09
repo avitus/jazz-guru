@@ -42,7 +42,10 @@ class ActionController:
         self.policy = policy or get_policy()
         self.max_rounds = max_rounds or self.policy.budgets.per_turn.tool_calls
         self.on_event = on_event  # optional callable(name, payload)
-        self.allowed: set[str] = self._allowed_set()
+        # Don't cache the allowlist as an attribute. Dynamic tools attach
+        # via ContextVar inside AgentLoop.step(); a frozen set here would
+        # exclude them from to_anthropic() AND fail the policy check on
+        # tool_use. Compute fresh each run() (cheap — just a registry walk).
 
     def _allowed_set(self) -> set[str]:
         allowed: set[str] = set()
@@ -71,7 +74,8 @@ class ActionController:
         max_tokens: int | None = None,
         temperature: float = 0.7,
     ) -> RunResult:
-        tools = self.registry.to_anthropic(allowed=self.allowed)
+        allowed = self._allowed_set()
+        tools = self.registry.to_anthropic(allowed=allowed)
         result = RunResult(final_text="", messages=list(messages))
         for round_idx in range(self.max_rounds):
             result.rounds = round_idx + 1
@@ -123,7 +127,7 @@ class ActionController:
                     result.errors.append(err)
                     continue
                 result.tool_calls += 1
-                if tu["name"] not in self.allowed:
+                if tu["name"] not in allowed:
                     msg = f"tool '{tu['name']}' not allowed by policy"
                     self._emit("tool_result", {"id": tu["id"], "name": tu["name"], "error": msg})
                     tool_results.append({
