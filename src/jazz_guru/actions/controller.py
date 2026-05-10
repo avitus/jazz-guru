@@ -141,6 +141,12 @@ class ActionController:
                         "is_error": True,
                         "content": msg,
                     })
+                    # Match the other error paths (budget exceeded, tool
+                    # exception): policy violations are surfaced in the
+                    # aggregated `result.errors` so they show up in eval/
+                    # logging downstream, not just in the model-facing
+                    # tool_result.
+                    result.errors.append(msg)
                     continue
                 self._emit("tool_use", {"id": tu["id"], "name": tu["name"], "input": tu["input"]})
                 try:

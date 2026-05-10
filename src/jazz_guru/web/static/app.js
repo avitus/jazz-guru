@@ -127,8 +127,11 @@
   function connectWs() {
     if (!sessionId) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const keyq = apiKey ? `?key=${encodeURIComponent(apiKey)}` : '';
-    ws = new WebSocket(`${proto}://${location.host}/ws/sessions/${sessionId}/chat${keyq}`);
+    // Send the API key via Sec-WebSocket-Protocol (["bearer", "<key>"])
+    // instead of a `?key=` query string — keeps the secret out of browser
+    // history, proxy logs, and trace captures.
+    const url = `${proto}://${location.host}/ws/sessions/${sessionId}/chat`;
+    ws = apiKey ? new WebSocket(url, ['bearer', apiKey]) : new WebSocket(url);
     ws.onopen = () => setStatus(`connected · session ${sessionId.slice(0, 8)}…`, true);
     ws.onclose = () => setStatus('disconnected');
     ws.onerror = () => setStatus('error');

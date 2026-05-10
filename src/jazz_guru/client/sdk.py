@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 import websockets
+from websockets.typing import Subprotocol
 
 
 class ServerError(RuntimeError):
@@ -145,10 +146,16 @@ class JazzGuruClient:
     async def _ws(self, session_id: str) -> AsyncIterator[Any]:
         ws_url = self.base_url.replace("http://", "ws://").replace("https://", "wss://")
         url = f"{ws_url}/ws/sessions/{session_id}/chat"
-        if self.api_key:
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}key={self.api_key}"
-        async with websockets.connect(url, max_size=4 * 1024 * 1024) as ws:
+        # Pass the API key via Sec-WebSocket-Protocol (["bearer", token]) so
+        # it isn't logged in URLs.
+        subprotocols: list[Subprotocol] | None = (
+            [Subprotocol("bearer"), Subprotocol(self.api_key)] if self.api_key else None
+        )
+        async with websockets.connect(
+            url,
+            max_size=4 * 1024 * 1024,
+            subprotocols=subprotocols,
+        ) as ws:
             yield ws
 
     async def stream_chat(

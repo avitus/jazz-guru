@@ -48,6 +48,22 @@ def _session_dir(session_id: uuid.UUID) -> Path:
     return get_settings().jg_workspace_dir / "sessions" / str(session_id)
 
 
+def _ws_token_and_subproto(ws: WebSocket) -> tuple[str | None, str | None]:
+    """Pull the bearer token (and the subprotocol to echo) from a WS handshake.
+
+    Protocol convention: the client sets ``Sec-WebSocket-Protocol`` to
+    ``["bearer", "<token>"]``. The server picks the ``bearer`` protocol
+    back, so the handshake completes with that as the negotiated
+    subprotocol; the second token is the credential. Returns
+    ``(token, accept_protocol)`` — both ``None`` when no auth was offered.
+    """
+    raw = ws.headers.get("sec-websocket-protocol", "")
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if len(parts) >= 2 and parts[0].lower() == "bearer":
+        return parts[1], parts[0]
+    return None, None
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="jazz-guru", version="0.1.0")
     sm = SessionManager()
@@ -200,9 +216,14 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
             safe = Path(name).name.lstrip(".") or f"upload_{int(time.time())}.bin"
         else:
             safe = f"upload_{int(time.time())}.bin"
-        target = in_dir / safe
+        # Resolve both sides before the containment check — if
+        # JG_WORKSPACE_DIR is configured as a relative path, an unresolved
+        # `target` would be relative while `in_dir.resolve()` is absolute,
+        # and `relative_to` would falsely flag every valid upload.
+        in_dir_resolved = in_dir.resolve()
+        target = (in_dir_resolved / safe).resolve()
         try:
-            target.relative_to(in_dir.resolve())
+            target.relative_to(in_dir_resolved)
         except ValueError as e:
             raise HTTPException(400, "filename escapes upload dir") from e
 
@@ -267,9 +288,15 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
     # ---------- websocket -----------------------------------------------
     @app.websocket("/ws/sessions/{session_id}/chat")
     async def ws_chat(ws: WebSocket, session_id: str) -> None:
-        await ws.accept()
+        # Pull the API key from the Sec-WebSocket-Protocol header rather
+        # than `?key=` so secrets stay out of URLs (browser history,
+        # reverse-proxy logs, trace captures). Convention: client requests
+        # protocols ["bearer", "<token>"]; we accept the "bearer" protocol
+        # back and treat the second token as the credential.
+        token, accept_proto = _ws_token_and_subproto(ws)
+        await ws.accept(subprotocol=accept_proto)
         try:
-            auth.require_ws(ws.query_params.get("key"))
+            auth.require_ws(token)
         except HTTPException:
             await ws.send_json({"type": "error", "error": "invalid key"})
             await ws.close(code=4401)

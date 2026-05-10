@@ -79,11 +79,21 @@ async def _gather_session_text(session_id: uuid.UUID) -> tuple[str, list[dict[st
         ).scalars().all()
     history: list[dict[str, Any]] = []
     for t in turns:
-        if t.role in ("user", "assistant"):
+        if t.role not in ("user", "assistant"):
+            continue
+        # Turn.content is a JSON column. AgentLoop._record_turn writes
+        # dicts like {"text": "..."}, but we tolerate plain-string content
+        # too — a row authored by a different code path (or via a future
+        # change) would otherwise be silently dropped.
+        if isinstance(t.content, str):
+            text = t.content
+        elif isinstance(t.content, dict):
+            text = str(t.content.get("text", "") or "")
+        else:
             text = ""
-            if isinstance(t.content, dict):
-                text = t.content.get("text", "")
-            history.append({"role": t.role, "content": text})
+        if not text:
+            continue
+        history.append({"role": t.role, "content": text})
     summary = await summarize_history(history)
     return summary, history
 

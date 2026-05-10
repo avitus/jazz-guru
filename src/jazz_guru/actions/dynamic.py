@@ -269,13 +269,31 @@ def global_tools_dir() -> Path:
     return base
 
 
+def _safe_join(base: Path, name: str) -> Path:
+    """Join ``name`` under ``base`` and reject any path that escapes it.
+
+    ``name`` is also ``validate_name``'d at the tool-create API boundary,
+    so traversal characters (`/`, `..`, leading dots, dashes) are already
+    rejected before we get here. This is the second line of defense per
+    the project guideline: filesystem-touching code goes through a
+    workspace-safe resolver.
+    """
+    base_resolved = base.resolve()
+    target = (base_resolved / f"{name}.py").resolve()
+    try:
+        target.relative_to(base_resolved)
+    except ValueError as e:
+        raise PermissionError(f"path {target} escapes {base_resolved}") from e
+    return target
+
+
 def write_session_tool_file(session_id: str | None, name: str, source: str) -> Path:
-    p = session_tools_dir(session_id) / f"{name}.py"
+    p = _safe_join(session_tools_dir(session_id), name)
     p.write_text(source, encoding="utf-8")
     return p
 
 
 def write_global_tool_file(name: str, source: str) -> Path:
-    p = global_tools_dir() / f"{name}.py"
+    p = _safe_join(global_tools_dir(), name)
     p.write_text(source, encoding="utf-8")
     return p

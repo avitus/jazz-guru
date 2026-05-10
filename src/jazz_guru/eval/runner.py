@@ -30,7 +30,19 @@ class TraceSummary:
 
 
 def load_trace(session_id: str | uuid.UUID) -> list[TraceRecord]:
-    p: Path = get_settings().jg_trace_dir / f"{session_id}.jsonl"
+    # Constrain to a real UUID before joining into the trace dir so a
+    # caller-supplied "../../etc/passwd" can't escape jg_trace_dir.
+    try:
+        sid = session_id if isinstance(session_id, uuid.UUID) else uuid.UUID(str(session_id))
+    except (ValueError, TypeError) as e:
+        log.warning("trace.bad_session_id", session_id=str(session_id), err=str(e))
+        return []
+    trace_dir = Path(get_settings().jg_trace_dir).resolve()
+    p = (trace_dir / f"{sid}.jsonl").resolve()
+    try:
+        p.relative_to(trace_dir)
+    except ValueError:
+        return []
     if not p.exists():
         return []
     out: list[TraceRecord] = []
@@ -74,7 +86,11 @@ def summarize_trace(
         if r.type == "turn_start":
             turns += 1
         elif r.type == "turn_end":
-            final_text = r.payload.get("text", final_text) or final_text
+            # Take the latest turn's text directly; carrying the previous
+            # value forward would surface stale assistant output if a turn
+            # ended without text (errored out, was interrupted, etc.).
+            text = r.payload.get("text")
+            final_text = text if isinstance(text, str) else ""
         elif r.type == "tool_use":
             tool_calls += 1
         elif r.type == "error":
