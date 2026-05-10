@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import textwrap
 from contextvars import ContextVar, Token
 from pathlib import Path
@@ -287,7 +288,7 @@ async def tool_promote_to_source(name: str, description: str | None = None) -> d
         name=spec.name,
         description=desc,
     )
-    target.write_text(rendered, encoding="utf-8")
+    await asyncio.to_thread(target.write_text, rendered, encoding="utf-8")
     _emit(
         "tool_promoted",
         {"name": spec.name, "scope": "source", "path": str(target)},
