@@ -120,6 +120,30 @@ async def test_emits_tool_proposed_event(attach_dyn) -> None:
     assert "tool_proposed" in kinds
 
 
+def test_source_template_handles_brace_literals_in_user_source() -> None:
+    """Templating the agent's source must tolerate dict literals + f-strings.
+
+    Regression for the case where str.format on user source containing
+    `{...}` raised KeyError; the marker-replace happens AFTER the format
+    of the (validated) name/description placeholders.
+    """
+    import textwrap as _tw
+
+    from jazz_guru.actions.tools.tool_meta import _BODY_MARKER, _SOURCE_TEMPLATE
+
+    src = _tw.dedent(
+        """
+        def run(name):
+            return {"greeting": f"hello {name}", "meta": {"k": 1}}
+        """
+    ).strip()
+    formatted = _SOURCE_TEMPLATE.format(name="greet", description="Greet someone")
+    rendered = formatted.replace(_BODY_MARKER, _tw.indent(src, ""))
+    assert _BODY_MARKER not in rendered
+    assert "_Auto_greet_Input" in rendered
+    compile(rendered, "<rendered>", "exec")  # raises if not valid Python
+
+
 @pytest.mark.asyncio
 async def test_overwrites_existing_session_tool(attach_dyn) -> None:
     await registry.invoke(
