@@ -13,6 +13,7 @@ Each generated tool exposes a ``run(**kwargs) -> dict | str`` (or async).
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import importlib.util
@@ -109,10 +110,16 @@ def validate_source(source: str) -> None:
     if not source.strip():
         raise ToolValidationError("source is empty")
     try:
-        compile(source, "<dynamic-tool>", "exec")
+        tree = ast.parse(source, filename="<dynamic-tool>")
     except SyntaxError as e:
         raise ToolValidationError(f"syntax error: {e}") from e
-    if "def run" not in source:
+    # AST walk so we accept `def run` and `async def run` but reject the
+    # name appearing only in comments, docstrings, or a nested scope.
+    has_run = any(
+        isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == "run"
+        for node in tree.body
+    )
+    if not has_run:
         raise ToolValidationError("source must define a top-level `run` function")
 
 

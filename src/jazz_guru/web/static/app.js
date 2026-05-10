@@ -78,13 +78,32 @@
     } catch (e) { /* ignore */ }
   }
 
+  // Track the last object URL so we can revoke it on next playback —
+  // otherwise each artifact tap leaks a Blob URL.
+  let lastAudioObjectUrl = null;
+
+  async function fetchArtifactBlob(url) {
+    // Authenticated fetch via x-api-key header — never via `?key=` query
+    // string, so credentials don't end up in browser history / proxy logs.
+    const r = await fetch(url, { headers: headers() });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.blob();
+  }
+
   async function openArtifact(a) {
-    const url = a.url + (apiKey ? `?key=${encodeURIComponent(apiKey)}` : '');
+    const url = a.url; // server-relative; auth comes from headers()
     const ext = (a.path.split('.').pop() || '').toLowerCase();
     if (['wav', 'flac', 'mp3', 'ogg'].includes(ext)) {
-      ui.audio.src = url;
-      ui.np.textContent = `playing ${a.path}`;
-      ui.audio.play().catch(() => {});
+      try {
+        const blob = await fetchArtifactBlob(url);
+        if (lastAudioObjectUrl) URL.revokeObjectURL(lastAudioObjectUrl);
+        lastAudioObjectUrl = URL.createObjectURL(blob);
+        ui.audio.src = lastAudioObjectUrl;
+        ui.np.textContent = `playing ${a.path}`;
+        ui.audio.play().catch(() => {});
+      } catch (e) {
+        logEvent('error', `audio load failed: ${e}`);
+      }
     } else if (ext === 'mxl' || ext === 'xml' || ext === 'musicxml') {
       try {
         const buf = await (await fetch(url, { headers: headers() })).arrayBuffer();
@@ -94,9 +113,19 @@
       }
     } else if (ext === 'mid' || ext === 'midi') {
       logEvent('llm', `MIDI cannot be auto-rendered in browser; render it to .wav via render_midi`);
-      window.open(url, '_blank');
+      try {
+        const blob = await fetchArtifactBlob(url);
+        window.open(URL.createObjectURL(blob), '_blank');
+      } catch (e) {
+        logEvent('error', `open failed: ${e}`);
+      }
     } else {
-      window.open(url, '_blank');
+      try {
+        const blob = await fetchArtifactBlob(url);
+        window.open(URL.createObjectURL(blob), '_blank');
+      } catch (e) {
+        logEvent('error', `open failed: ${e}`);
+      }
     }
   }
 

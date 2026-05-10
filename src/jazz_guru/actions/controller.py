@@ -79,10 +79,14 @@ class ActionController:
         max_tokens: int | None = None,
         temperature: float = 0.7,
     ) -> RunResult:
-        allowed = self._allowed_set()
-        tools = self.registry.to_anthropic(allowed=allowed)
         result = RunResult(final_text="", messages=list(messages))
         for round_idx in range(self.max_rounds):
+            # Recompute on every round: if a previous round called
+            # tool_create, the new tool is now in the dynamic overlay and
+            # we want the next LLM request to see it. Otherwise the model
+            # would be told to use a tool whose name we'd then reject.
+            allowed = self._allowed_set()
+            tools = self.registry.to_anthropic(allowed=allowed)
             result.rounds = round_idx + 1
             self._emit("llm_request", {"round": round_idx, "messages_len": len(result.messages)})
             try:

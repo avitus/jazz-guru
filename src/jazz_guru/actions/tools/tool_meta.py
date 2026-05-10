@@ -124,6 +124,13 @@ async def tool_create(
 
     src = textwrap.dedent(source).strip() + "\n"
     sid = current().session_id
+    # Check for a bound dynamic registry BEFORE touching the filesystem so
+    # we don't leave an orphan .py file for a tool that was never
+    # registered (e.g. when tool_create is called outside an AgentLoop
+    # turn).
+    dyn = registry.current_dynamic()
+    if dyn is None:
+        return {"ok": False, "error": "no dynamic registry attached for this session"}
     path = write_session_tool_file(sid, nm, src)
 
     spec = DynamicSpec(
@@ -137,9 +144,6 @@ async def tool_create(
         owner_session_id=sid,
         source_path=path,
     )
-    dyn = registry.current_dynamic()
-    if dyn is None:
-        return {"ok": False, "error": "no dynamic registry attached for this session"}
     dyn.add(spec)
     _emit(
         "tool_proposed",
@@ -205,10 +209,22 @@ async def tool_publish(name: str, note: str | None = None) -> dict[str, Any]:
         )
     except Exception as e:
         return {"ok": False, "error": f"db error: {e}"}
-    write_global_tool_file(name, spec.source)
+    # The DB is the source of truth — once upsert succeeds, the tool is
+    # discoverable by every future session. Mirroring to generated_tools/
+    # is a convenience for inspection; if it fails we report a warning but
+    # don't pretend the publish failed.
+    warning: str | None = None
+    try:
+        write_global_tool_file(spec.name, spec.source)
+    except OSError as e:
+        warning = f"published in DB, but failed to mirror generated_tools/{spec.name}.py: {e}"
+        log.warning("tool_publish.file_mirror_failed", name=spec.name, err=str(e))
     spec.scope = "global"
     _emit("tool_promoted", {"name": spec.name, "scope": "global", "id": str(row_id)})
-    return {"ok": True, "id": str(row_id), "name": spec.name, "scope": "global"}
+    out: dict[str, Any] = {"ok": True, "id": str(row_id), "name": spec.name, "scope": "global"}
+    if warning:
+        out["warning"] = warning
+    return out
 
 
 # ---------- tool_promote_to_source ----------------------------------------
