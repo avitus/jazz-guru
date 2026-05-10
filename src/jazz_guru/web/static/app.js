@@ -4,7 +4,23 @@
   const fmt = (b) => (b > 1024 ? (b / 1024).toFixed(1) + 'k' : b + 'B');
   const stamp = () => new Date().toTimeString().slice(0, 8);
 
-  const apiKey = new URLSearchParams(location.search).get('key') || '';
+  // The API key may arrive once in the page URL (`?key=...`) for the
+  // initial hand-off; we move it into sessionStorage immediately and
+  // strip it from the URL via history.replaceState so it doesn't leak
+  // into browser history, copied links, or Referer headers on outbound
+  // fetches.
+  const apiKey = (() => {
+    const params = new URLSearchParams(location.search);
+    const fromUrl = params.get('key') || '';
+    let key = fromUrl || sessionStorage.getItem('jg_api_key') || '';
+    if (fromUrl) {
+      try { sessionStorage.setItem('jg_api_key', fromUrl); } catch {}
+      params.delete('key');
+      const qs = params.toString();
+      history.replaceState(null, '', `${location.pathname}${qs ? `?${qs}` : ''}${location.hash}`);
+    }
+    return key;
+  })();
   const headers = () => apiKey ? { 'x-api-key': apiKey, 'content-type': 'application/json' }
                                 : { 'content-type': 'application/json' };
 
@@ -160,11 +176,28 @@
     // instead of a `?key=` query string — keeps the secret out of browser
     // history, proxy logs, and trace captures.
     const url = `${proto}://${location.host}/ws/sessions/${sessionId}/chat`;
-    ws = apiKey ? new WebSocket(url, ['bearer', apiKey]) : new WebSocket(url);
-    ws.onopen = () => setStatus(`connected · session ${sessionId.slice(0, 8)}…`, true);
-    ws.onclose = () => setStatus('disconnected');
-    ws.onerror = () => setStatus('error');
-    ws.onmessage = (ev) => {
+    // Detach the previous socket's handlers and close it before installing
+    // the new one so late events from the prior socket can't overwrite
+    // status or inject stale events into the cleared UI on a fast
+    // new-session flow.
+    if (ws) {
+      ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+      try { ws.close(); } catch {}
+    }
+    const socket = apiKey ? new WebSocket(url, ['bearer', apiKey]) : new WebSocket(url);
+    const boundSessionId = sessionId;
+    ws = socket;
+    // Each handler ignores calls if the global `ws` has moved on or the
+    // session was switched out underneath it.
+    const isCurrent = () => ws === socket && sessionId === boundSessionId;
+    socket.onopen = () => {
+      if (!isCurrent()) return;
+      setStatus(`connected · session ${boundSessionId.slice(0, 8)}…`, true);
+    };
+    socket.onclose = () => { if (isCurrent()) setStatus('disconnected'); };
+    socket.onerror = () => { if (isCurrent()) setStatus('error'); };
+    socket.onmessage = (ev) => {
+      if (!isCurrent()) return;
       let evt; try { evt = JSON.parse(ev.data); } catch { return; }
       handleEvent(evt);
     };
@@ -191,6 +224,11 @@
       const u = evt.usage || {};
       const cost = (u.cost_usd || 0).toFixed(4);
       logEvent('llm', `final  tools=${evt.tool_calls}  in=${u.input_tokens} out=${u.output_tokens}  $${cost}`);
+      // The server now ships non-fatal policy/tool errors that occurred
+      // during the turn — surface each so they don't quietly disappear.
+      for (const err of evt.errors || []) {
+        logEvent('error', typeof err === 'string' ? err : JSON.stringify(err));
+      }
       refreshArtifacts();
     } else if (t === 'error') {
       const msg = evt.error || (evt.payload && evt.payload.error) || 'error';
@@ -264,6 +302,12 @@
     stream.getTracks().forEach((t) => t.stop());
     const blob = new Blob(recChunks, { type: 'audio/webm' });
     if (!sessionId) await ensureSession();
+    if (!sessionId) {
+      // ensureSession already logged its own error; bail out so we don't
+      // turn that failure into a second misleading "/uploads/null" 400.
+      logEvent('error', 'upload aborted: no session');
+      return;
+    }
     const filename = `web_${Date.now()}.webm`;
     const r = await fetch(`/uploads/${sessionId}?name=${encodeURIComponent(filename)}`, {
       method: 'POST',
