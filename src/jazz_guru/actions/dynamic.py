@@ -99,10 +99,14 @@ def validate_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
         raise ToolValidationError("input_schema must be an object")
     if schema.get("type", "object") != "object":
         raise ToolValidationError("top-level input_schema.type must be 'object'")
-    schema.setdefault("type", "object")
-    schema.setdefault("properties", {})
-    schema.setdefault("additionalProperties", False)
-    return schema
+    # Return a normalized copy instead of mutating the caller's dict —
+    # callers that reuse or inspect the original shouldn't see surprise
+    # `additionalProperties: false` etc. injected by validation.
+    normalized = dict(schema)
+    normalized.setdefault("type", "object")
+    normalized.setdefault("properties", {})
+    normalized.setdefault("additionalProperties", False)
+    return normalized
 
 
 def validate_source(source: str) -> None:
@@ -259,7 +263,11 @@ def _load_module(mod_name: str, source: str) -> Any:
         raise RuntimeError("could not build module spec")
     mod = importlib.util.module_from_spec(spec)
     exec(source, mod.__dict__)
-    sys.modules[mod_name] = mod
+    # Intentionally NOT registered in sys.modules: each call to
+    # `_run_inproc` mints a fresh UUID-suffixed name, so accumulating
+    # entries would just grow sys.modules unbounded for long-running
+    # servers. The module object is returned and used directly; relative
+    # imports inside dynamic tools aren't supported (subprocess mode is).
     return mod
 
 
