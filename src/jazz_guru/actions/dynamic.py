@@ -158,14 +158,19 @@ class DynamicRegistry:
 # ---------- runners --------------------------------------------------------
 
 
+_USER_SOURCE_MARKER = "__JG_USER_SOURCE__"
+
+
 def _runner_template() -> str:
-    # Extracted to a function for easier testing/inspection.
+    # Uses a marker placeholder rather than ``str.format`` so the user
+    # source can contain arbitrary ``{...}`` literals (dict literals,
+    # f-strings, etc.) without breaking interpolation.
     return textwrap.dedent(
-        '''
+        f'''
         import json, sys, traceback, asyncio, inspect
 
         # ---- begin user source -------------------------------------------
-        {user_source}
+        {_USER_SOURCE_MARKER}
         # ---- end user source ---------------------------------------------
 
         def _main():
@@ -197,7 +202,7 @@ def _runner_template() -> str:
 async def _run_subprocess(spec: DynamicSpec, kwargs: dict[str, Any]) -> Any:
     policy = get_policy().for_tool("python_exec")
     timeout = policy.timeout_sec or 30
-    src = _runner_template().format(user_source=spec.source)
+    src = _runner_template().replace(_USER_SOURCE_MARKER, spec.source)
     cwd = session_workspace(current().session_id)
     proc = await asyncio.create_subprocess_exec(
         sys.executable,

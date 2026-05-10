@@ -48,7 +48,27 @@ def test_validate_source_rejects_syntax_errors() -> None:
         validate_source("def run(:\n  pass\n")
 
 
-@pytest.mark.asyncio
+async def test_invoke_subprocess_with_brace_literals() -> None:
+    """User source with `{...}` (dict literals, f-strings) must not break the
+    runner template — `str.format` would have raised KeyError on these."""
+    src = textwrap.dedent(
+        """
+        def run(name):
+            return {"greeting": f"hello {name}", "fields": {"a": 1}}
+        """
+    )
+    spec = DynamicSpec(
+        name="greet",
+        description="g",
+        input_schema={"type": "object"},
+        source=src,
+        sha256=hash_source(src),
+        execution="subprocess",
+    )
+    out = await invoke(spec, {"name": "world"})
+    assert out == {"greeting": "hello world", "fields": {"a": 1}}
+
+
 async def test_invoke_subprocess_round_trip() -> None:
     src = textwrap.dedent(
         """
