@@ -234,8 +234,11 @@ async def _run_subprocess(spec: DynamicSpec, kwargs: dict[str, Any]) -> Any:
 
 
 async def _run_inproc(spec: DynamicSpec, kwargs: dict[str, Any]) -> Any:
+    # The UUID suffix guarantees a fresh module per invocation (so each
+    # call gets a clean global namespace). The earlier `sys.modules.get`
+    # short-circuit was therefore dead code — drop it.
     mod_name = f"jazz_guru._dyn.{spec.name}_{uuid_mod.uuid4().hex[:8]}"
-    mod = sys.modules.get(mod_name) or _load_module(mod_name, spec.source)
+    mod = _load_module(mod_name, spec.source)
     fn = getattr(mod, "run", None)
     if fn is None:
         return {"__error__": "no run() in source"}
