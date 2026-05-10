@@ -195,16 +195,22 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
     except Exception as e:
         log.warning("reflexion.snapshot_failed", err=str(e))
 
-    await log_event(
-        session_id=session_id,
-        event_type=EventType.REFLEXION.value,
-        payload={
-            "score": result.score,
-            "critique": result.critique[:500],
-            "memory_writes": len(result.memory_writes),
-            "playbook_entries": len(result.playbook_entries),
-        },
-    )
+    # Telemetry is best-effort: a DB hiccup writing the REFLEXION event
+    # shouldn't undo a successful distillation that already wrote memory,
+    # playbook entries, and the snapshot.
+    try:
+        await log_event(
+            session_id=session_id,
+            event_type=EventType.REFLEXION.value,
+            payload={
+                "score": result.score,
+                "critique": result.critique[:500],
+                "memory_writes": len(result.memory_writes),
+                "playbook_entries": len(result.playbook_entries),
+            },
+        )
+    except Exception as e:
+        log.warning("reflexion.event_log_failed", err=str(e))
     try:
         from jazz_guru.distillation.scheduler import enqueue_eval
 

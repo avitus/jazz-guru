@@ -247,7 +247,16 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
         except Exception:
             target.unlink(missing_ok=True)
             raise
-        return {"path": str(target), "size": total, "session_id": str(sid)}
+        # Return a session-relative path + an artifact URL rather than the
+        # absolute filesystem path; clients shouldn't depend on the
+        # server's workspace layout.
+        rel = target.relative_to(_session_dir(sid).resolve())
+        return {
+            "path": str(rel),
+            "url": f"/artifacts/{sid}/{rel}",
+            "size": total,
+            "session_id": str(sid),
+        }
 
     # ---------- artifacts ------------------------------------------------
     @app.get("/artifacts/{session_id}")
@@ -354,6 +363,10 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
                     "type": "final",
                     "text": res.text,
                     "tool_calls": res.tool_calls,
+                    # Match the HTTP /chat shape so non-fatal policy /
+                    # tool failures aren't invisible to web clients even
+                    # when the turn completes.
+                    "errors": list(res.errors),
                     "usage": {
                         "input_tokens": res.usage.input_tokens,
                         "output_tokens": res.usage.output_tokens,

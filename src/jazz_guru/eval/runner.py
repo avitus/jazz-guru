@@ -56,6 +56,16 @@ def load_trace(session_id: str | uuid.UUID) -> list[TraceRecord]:
             # writers can be interrupted mid-write or get truncated.
             log.warning("trace.bad_line", path=str(p), lineno=lineno, err=str(e))
             continue
+        # `[]`, `"oops"`, `null`, etc. parse fine but aren't trace records;
+        # rec.get(...) below would AttributeError on them.
+        if not isinstance(rec, dict):
+            log.warning(
+                "trace.bad_record",
+                path=str(p),
+                lineno=lineno,
+                record_type=type(rec).__name__,
+            )
+            continue
         try:
             payload = rec.get("payload", {})
             if not isinstance(payload, dict):
