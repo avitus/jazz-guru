@@ -131,7 +131,7 @@ async def tool_create(
     dyn = registry.current_dynamic()
     if dyn is None:
         return {"ok": False, "error": "no dynamic registry attached for this session"}
-    path = write_session_tool_file(sid, nm, src)
+    path = await asyncio.to_thread(write_session_tool_file, sid, nm, src)
 
     spec = DynamicSpec(
         name=nm,
@@ -215,7 +215,7 @@ async def tool_publish(name: str, note: str | None = None) -> dict[str, Any]:
     # don't pretend the publish failed.
     warning: str | None = None
     try:
-        write_global_tool_file(spec.name, spec.source)
+        await asyncio.to_thread(write_global_tool_file, spec.name, spec.source)
     except OSError as e:
         warning = f"published in DB, but failed to mirror generated_tools/{spec.name}.py: {e}"
         log.warning("tool_publish.file_mirror_failed", name=spec.name, err=str(e))
