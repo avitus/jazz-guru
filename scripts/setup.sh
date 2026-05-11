@@ -43,14 +43,25 @@ if [[ "$PLATFORM" == "mac" ]]; then
   fi
 
   # Self-healing service start. `brew services start <svc>` can fail
-  # with `Bootstrap failed: 5: Input/output error` for several reasons:
-  # a stale registration in gui/<uid>, the service explicitly disabled
-  # in user-launchd state, a corrupt plist, or a launchd quirk that
-  # bootout alone doesn't clear. Try brew services first; on failure,
-  # clear known-bad state and retry; finally, fall back to starting
-  # the daemon directly when we have a known-good launch command.
-  # The agent only needs the service listening — it does not care
-  # whether launchd is the parent.
+  # with `Bootstrap failed: 5: Input/output error` for several reasons.
+  # The most common one in practice: another process is already bound
+  # to the service's port (e.g. a manual `redis-server` left behind
+  # from a previous unblock attempt). launchd spawns its own copy, the
+  # spawn exits immediately because the port is taken, and bootstrap
+  # reports failure — followed by an indefinite spawn-retry loop
+  # visible in `log show --predicate 'process=="launchd"'`.
+  # Less common: stale registration in gui/<uid>, the service disabled
+  # in user-launchd state, or a corrupt plist that bootout won't fix.
+  #
+  # Strategy:
+  #   0. If the service's port is already listening, declare victory.
+  #      The agent only cares that something is answering on the right
+  #      socket — not whether launchd is the parent.
+  #   1. brew services start.
+  #   2. bootout + enable + retry.
+  #   3. delete the user-level plist + retry.
+  #   4. spawn the daemon directly (only when caller provided a
+  #      fallback command + probe).
   start_service() {
     local svc="$1"
     local cmd_fallback="${2:-}"
