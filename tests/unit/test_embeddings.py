@@ -100,6 +100,41 @@ def test_ollama_probe_fails_when_daemon_down(monkeypatch: pytest.MonkeyPatch) ->
     assert "unreachable" in why
 
 
+def test_ollama_probe_rejects_scheme_less_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    # urllib accepts a scheme-less Request but urlopen later raises an
+    # ambiguous ValueError("unknown url type"). Reject early with a clear
+    # message AND without making the network call.
+    called = False
+
+    def fake_urlopen(*_a: Any, **_kw: Any) -> Any:
+        nonlocal called
+        called = True
+        raise AssertionError("urlopen should not be called for invalid URL")
+
+    monkeypatch.setattr(emb_mod.urllib.request, "urlopen", fake_urlopen)
+    ok, why = _ollama_available("localhost:11434", "mxbai-embed-large", 0.5)
+    assert ok is False
+    assert "unsupported Ollama URL" in why
+    assert called is False
+
+
+def test_ollama_probe_rejects_file_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    # file:// URLs would let urlopen read local files; treat as unsupported.
+    monkeypatch.setattr(emb_mod.urllib.request, "urlopen", lambda *_a, **_kw: None)
+    ok, why = _ollama_available("file:///tmp/api/tags", "mxbai-embed-large", 0.5)
+    assert ok is False
+    assert "unsupported Ollama URL" in why
+
+
+def test_ollama_probe_accepts_https(monkeypatch: pytest.MonkeyPatch) -> None:
+    # https://host[:port] is a valid scheme; should pass validation and
+    # reach the urlopen-driven happy path.
+    _patch_urlopen(monkeypatch, b'{"models":[{"name":"mxbai-embed-large:latest"}]}')
+    ok, why = _ollama_available("https://ollama.example.com", "mxbai-embed-large", 0.5)
+    assert ok is True
+    assert why == "ok"
+
+
 # ---------- OllamaProvider.embed ----------
 
 

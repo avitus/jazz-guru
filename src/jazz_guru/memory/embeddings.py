@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
 from functools import lru_cache
@@ -139,6 +140,9 @@ def _ollama_available(url: str, model: str, timeout_s: float) -> tuple[bool, str
     from the sync ``get_embeddings``.
     """
     url = url.rstrip("/")
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        return False, f"unsupported Ollama URL {url!r}; expected http(s)://host[:port]"
     try:
         req = urllib.request.Request(f"{url}/api/tags")
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
