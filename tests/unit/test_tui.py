@@ -217,12 +217,25 @@ async def test_send_lock_serializes_overlapping_calls() -> None:
 async def test_send_with_no_session_still_acquires_lock() -> None:
     """_send() must take the lock even when bailing out for missing
     client/session, otherwise a slow connect path elsewhere could race a
-    no-op send and leave _chat_buf in an inconsistent state."""
+    no-op send and leave _chat_buf in an inconsistent state.
+
+    Pre-acquire the lock and launch _send() concurrently. The send task
+    must wait for the lock — if it ever stops taking _send_lock, the task
+    would complete immediately and this test would fail. Then release
+    the lock and confirm the task drains and the lock is free."""
+    import asyncio as _asyncio
+
     app = _OfflineTui()
     async with app.run_test():
+        async with app._send_lock:
+            task = _asyncio.create_task(app._send("anything"))
+            # Yield twice so the task scheduler runs _send up to the
+            # `async with self._send_lock` point and blocks there.
+            await _asyncio.sleep(0)
+            await _asyncio.sleep(0)
+            assert not task.done()
+        await task
         assert not app._send_lock.locked()
-        await app._send("anything")  # bails out, no client
-        assert not app._send_lock.locked()  # released cleanly
 
 
 @pytest.fixture(autouse=True)
