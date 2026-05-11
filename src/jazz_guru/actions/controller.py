@@ -119,6 +119,28 @@ class ActionController:
             result.messages.append({"role": "assistant", "content": assistant_blocks})
 
             if resp.stop_reason != "tool_use" or not resp.tool_uses:
+                if resp.tool_uses:
+                    # stop_reason is max_tokens / pause_turn / refusal / etc.
+                    # with a partial tool_use attached. The tool input JSON
+                    # may be truncated, so we can't safely execute it — but
+                    # we MUST still emit a tool_result for every tool_use
+                    # block, otherwise the assistant message is left
+                    # dangling and the next API call rejects the history
+                    # ("tool_use ids were found without tool_result blocks
+                    # immediately after").
+                    synthetic = [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tu["id"],
+                            "is_error": True,
+                            "content": f"aborted: stop_reason={resp.stop_reason}",
+                        }
+                        for tu in resp.tool_uses
+                    ]
+                    result.messages.append({"role": "user", "content": synthetic})
+                    err = f"stop_reason={resp.stop_reason} with pending tool_use(s)"
+                    result.errors.append(err)
+                    self._emit("error", {"phase": "stop_with_tool_use", "error": err})
                 result.final_text = resp.text
                 break
 
