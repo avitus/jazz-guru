@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from jazz_guru.actions.context import ToolContext
+from jazz_guru.actions.context import ToolContext, reset_tool_context, set_tool_context
 from jazz_guru.actions.pruning import prune_tool_result
 from jazz_guru.config import ToolPolicy, get_settings
 
@@ -16,8 +17,16 @@ def isolated_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _ctx() -> ToolContext:
-    return ToolContext(session_id="test-session", turn_idx=3)
+@pytest.fixture(autouse=True)
+def _bind_tool_context() -> Iterator[None]:
+    """``prune_tool_result`` reads the active session/turn from the
+    per-task contextvar set by AgentLoop. Bind one for the duration of
+    each test so callers don't have to thread a ToolContext through."""
+    tok = set_tool_context(ToolContext(session_id="test-session", turn_idx=3))
+    try:
+        yield
+    finally:
+        reset_tool_context(tok)
 
 
 def test_small_result_passes_through(isolated_workspace: Path) -> None:
@@ -25,7 +34,6 @@ def test_small_result_passes_through(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "fs_read",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -39,7 +47,6 @@ def test_fs_read_large_result_pruned(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "fs_read",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -65,7 +72,6 @@ def test_shell_large_stdout_pruned(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "shell",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -82,7 +88,6 @@ def test_shell_small_passes_through(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "shell",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -102,7 +107,6 @@ def test_http_get_large_body_pruned(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "http_get",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -118,7 +122,6 @@ def test_http_error_response_passes_through(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "http_get",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -133,7 +136,6 @@ def test_per_tool_override_beats_default(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "fs_read",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(max_result_bytes=4_000),
         default_max_bytes=10_000,
     )
@@ -147,7 +149,6 @@ def test_unknown_tool_uses_generic_summary(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "some_future_tool",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -162,7 +163,6 @@ def test_unknown_tool_string_result(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "weird_tool",
         big,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -178,7 +178,6 @@ def test_manifest_path_lives_under_session_workspace(isolated_workspace: Path) -
     _, manifest = prune_tool_result(
         "fs_read",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -198,7 +197,6 @@ def test_python_exec_uses_shell_handler(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "python_exec",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -223,7 +221,6 @@ def test_http_post_uses_http_handler(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "http_post",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -248,7 +245,6 @@ def test_generic_dict_with_mixed_scalars_and_blobs(isolated_workspace: Path) -> 
     visible, manifest = prune_tool_result(
         "novel_tool",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -270,7 +266,6 @@ def test_generic_dict_preserves_none_values(isolated_workspace: Path) -> None:
     visible, _ = prune_tool_result(
         "novel_tool",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -288,7 +283,6 @@ def test_pruning_threshold_zero_always_prunes(isolated_workspace: Path) -> None:
     visible, manifest = prune_tool_result(
         "fs_read",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(max_result_bytes=0),
         default_max_bytes=10_000,
     )
@@ -305,7 +299,6 @@ def test_size_bytes_counts_utf8_not_chars(isolated_workspace: Path) -> None:
     _, manifest = prune_tool_result(
         "fs_read",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
@@ -317,15 +310,17 @@ def test_size_bytes_counts_utf8_not_chars(isolated_workspace: Path) -> None:
 def test_manifest_path_includes_tool_name_and_turn(isolated_workspace: Path) -> None:
     """The on-disk filename pattern <tool>_<turn>_<uuid>.json lets the agent
     grep its own tool_outputs/ directory by tool or by turn."""
-    ctx = ToolContext(session_id="sess-x", turn_idx=42)
-    value = {"path": "a", "size": 0, "content": "y" * 30_000}
-    _, manifest = prune_tool_result(
-        "fs_read",
-        value,
-        ctx=ctx,
-        policy=ToolPolicy(),
-        default_max_bytes=10_000,
-    )
+    tok = set_tool_context(ToolContext(session_id="sess-x", turn_idx=42))
+    try:
+        value = {"path": "a", "size": 0, "content": "y" * 30_000}
+        _, manifest = prune_tool_result(
+            "fs_read",
+            value,
+            policy=ToolPolicy(),
+            default_max_bytes=10_000,
+        )
+    finally:
+        reset_tool_context(tok)
     assert manifest is not None
     name = Path(manifest["path"]).name
     assert name.startswith("fs_read_42_")
@@ -335,15 +330,17 @@ def test_manifest_path_includes_tool_name_and_turn(isolated_workspace: Path) -> 
 def test_default_turn_idx_zero_when_unset(isolated_workspace: Path) -> None:
     """If ToolContext.turn_idx is None, the filename should still be
     well-formed (no literal "None" leaking into the path)."""
-    ctx = ToolContext(session_id="sess-x", turn_idx=None)
-    value = {"path": "a", "size": 0, "content": "y" * 30_000}
-    _, manifest = prune_tool_result(
-        "fs_read",
-        value,
-        ctx=ctx,
-        policy=ToolPolicy(),
-        default_max_bytes=10_000,
-    )
+    tok = set_tool_context(ToolContext(session_id="sess-x", turn_idx=None))
+    try:
+        value = {"path": "a", "size": 0, "content": "y" * 30_000}
+        _, manifest = prune_tool_result(
+            "fs_read",
+            value,
+            policy=ToolPolicy(),
+            default_max_bytes=10_000,
+        )
+    finally:
+        reset_tool_context(tok)
     assert manifest is not None
     assert "None" not in Path(manifest["path"]).name
 
@@ -360,13 +357,90 @@ def test_serialization_failure_falls_back_to_repr(isolated_workspace: Path) -> N
     visible, manifest = prune_tool_result(
         "weird",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )
     assert manifest is not None
     # Generic summary stringifies it via repr → preview should reflect that.
     assert visible["truncated_to_disk"] is True
+
+
+def test_http_handler_whitelists_safe_headers(isolated_workspace: Path) -> None:
+    """Only content-type, content-length, and location should pass into
+    the LLM-visible summary. set-cookie / authorization / vendor metadata
+    must be dropped to avoid leaking auth into the prompt. (CodeRabbit
+    follow-up #1 on PR #3)"""
+    body = "x" * 50_000
+    value = {
+        "status_code": 200,
+        "headers": {
+            "Content-Type": "application/json",
+            "content-length": "12345",
+            "Location": "https://x/follow",
+            "Set-Cookie": "session=evil; HttpOnly",
+            "Authorization": "Bearer secret",
+            "X-Vendor": "leak",
+        },
+        "body": body,
+        "truncated": False,
+        "final_url": "https://x/",
+    }
+    visible, manifest = prune_tool_result(
+        "http_get",
+        value,
+        policy=ToolPolicy(),
+        default_max_bytes=10_000,
+    )
+    assert manifest is not None
+    safe = visible["headers"]
+    # Case-insensitive whitelist match keeps these:
+    assert "Content-Type" in safe
+    assert "content-length" in safe
+    assert "Location" in safe
+    # Sensitive / vendor headers are stripped:
+    for forbidden in ("Set-Cookie", "Authorization", "X-Vendor"):
+        assert forbidden not in safe
+
+
+def test_http_handler_omits_headers_when_no_safe_keys(isolated_workspace: Path) -> None:
+    """If none of the response headers fall in the whitelist, omit the
+    field entirely rather than emit an empty dict."""
+    body = "x" * 50_000
+    value = {
+        "status_code": 200,
+        "headers": {"Set-Cookie": "x", "X-Custom": "y"},
+        "body": body,
+        "truncated": False,
+        "final_url": "https://x/",
+    }
+    visible, _ = prune_tool_result(
+        "http_get",
+        value,
+        policy=ToolPolicy(),
+        default_max_bytes=10_000,
+    )
+    assert "headers" not in visible
+
+
+def test_prune_reads_session_id_from_contextvar(isolated_workspace: Path) -> None:
+    """``prune_tool_result`` no longer takes a ``ctx`` argument; it pulls
+    the session/turn from ``actions.context.current()``. (CodeRabbit
+    follow-up #2 on PR #3)"""
+    tok = set_tool_context(ToolContext(session_id="from-ctxvar", turn_idx=7))
+    try:
+        value = {"path": "a", "size": 0, "content": "z" * 30_000}
+        _, manifest = prune_tool_result(
+            "fs_read",
+            value,
+            policy=ToolPolicy(),
+            default_max_bytes=10_000,
+        )
+    finally:
+        reset_tool_context(tok)
+    assert manifest is not None
+    assert "from-ctxvar" in manifest["path"]
+    # turn idx from contextvar is reflected in the filename.
+    assert "_7_" in Path(manifest["path"]).name
 
 
 def test_handler_output_over_budget_falls_back_to_generic(isolated_workspace: Path) -> None:
@@ -385,7 +459,6 @@ def test_handler_output_over_budget_falls_back_to_generic(isolated_workspace: Pa
     visible, manifest = prune_tool_result(
         "http_get",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(max_result_bytes=2_000),
         default_max_bytes=10_000,
     )
@@ -404,7 +477,6 @@ def test_http_error_response_under_threshold_passes_through(isolated_workspace: 
     visible, manifest = prune_tool_result(
         "http_get",
         value,
-        ctx=_ctx(),
         policy=ToolPolicy(max_result_bytes=10_000),
         default_max_bytes=10_000,
     )
@@ -423,7 +495,6 @@ def test_tool_outputs_directory_created_lazily(isolated_workspace: Path) -> None
     prune_tool_result(
         "fs_read",
         {"path": "x", "size": 0, "content": "z" * 30_000},
-        ctx=_ctx(),
         policy=ToolPolicy(),
         default_max_bytes=10_000,
     )

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from jazz_guru.actions.context import current as current_tool_ctx
 from jazz_guru.actions.pruning import prune_tool_result
 from jazz_guru.actions.registry import ToolRegistry, register_all
 from jazz_guru.config import Policy, get_policy, get_settings
@@ -170,7 +169,6 @@ class ActionController:
                     visible, manifest = prune_tool_result(
                         tu["name"],
                         out,
-                        ctx=current_tool_ctx(),
                         policy=self.policy.for_tool(tu["name"]),
                         default_max_bytes=self.policy.default_max_result_bytes,
                     )

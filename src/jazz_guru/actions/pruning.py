@@ -15,11 +15,18 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from jazz_guru.actions.context import ToolContext
+from jazz_guru.actions.context import ToolContext, current
 from jazz_guru.actions.sandbox import session_workspace
 from jazz_guru.config import ToolPolicy
 
 _PREVIEW_CHARS = 300
+
+# Headers whose values are routinely useful to the model (content type for
+# parsing, length for size sanity, location for redirects). Anything else —
+# notably ``set-cookie``, ``authorization``, and assorted vendor metadata —
+# is dropped to keep the prompt clean and avoid leaking auth material back
+# into LLM context.
+_SAFE_HTTP_HEADERS = {"content-type", "content-length", "location"}
 
 
 def _serialize(value: Any) -> str:
@@ -91,8 +98,13 @@ def _handle_http(value: dict[str, Any], full_path: Path) -> dict[str, Any]:
     if "error" in value:
         return value  # error responses are already small
     summary: dict[str, Any] = {
-        k: v for k, v in value.items() if k in {"status_code", "headers", "truncated", "final_url"}
+        k: v for k, v in value.items() if k in {"status_code", "truncated", "final_url"}
     }
+    headers = value.get("headers") or {}
+    if isinstance(headers, dict):
+        safe = {k: v for k, v in headers.items() if k.lower() in _SAFE_HTTP_HEADERS}
+        if safe:
+            summary["headers"] = safe
     body = value.get("body", "")
     if not isinstance(body, str):
         body = str(body)
@@ -144,7 +156,6 @@ def prune_tool_result(
     name: str,
     value: Any,
     *,
-    ctx: ToolContext,
     policy: ToolPolicy,
     default_max_bytes: int,
 ) -> tuple[Any, dict[str, Any] | None]:
@@ -154,6 +165,9 @@ def prune_tool_result(
     ``tool_result`` block. ``manifest`` is non-None only when a full payload
     was written to disk; consumers (trace, WS) can surface it for debugging
     and the agent can re-read the file via ``fs_read``.
+
+    Session/turn context is read from the per-task contextvar set by the
+    AgentLoop — callers don't need to thread ``ToolContext`` through.
     """
     serialized = _serialize(value)
     size = len(serialized.encode("utf-8"))
@@ -161,6 +175,7 @@ def prune_tool_result(
     if size <= threshold:
         return value, None
 
+    ctx = current()
     full_path = _write_full(value, name, ctx)
     handler = _SHAPE_HANDLERS.get(name)
     if handler is not None and isinstance(value, dict):
