@@ -1,15 +1,16 @@
 version: 1
 default: allow
 auto_approve: true
+default_max_result_bytes: 10000
 
 tools:
-  fs_read:        { mode: allow }
+  fs_read:        { mode: allow, max_result_bytes: 4000 }
   fs_write:       { mode: allow, scope: workspace }
   fs_list:        { mode: allow }
-  shell:          { mode: allow, timeout_sec: 60 }
-  http_get:       { mode: allow }
-  http_post:      { mode: allow }
-  python_exec:    { mode: allow, timeout_sec: 30, mem_mb: 512 }
+  shell:          { mode: allow, timeout_sec: 60, max_result_bytes: 4000 }
+  http_get:       { mode: allow, max_result_bytes: 8000 }
+  http_post:      { mode: allow, max_result_bytes: 8000 }
+  python_exec:    { mode: allow, timeout_sec: 30, mem_mb: 512, max_result_bytes: 4000 }
   code_gen:       { mode: allow, scope: workspace }
   web_search:     { mode: allow }
   vision:         { mode: allow }

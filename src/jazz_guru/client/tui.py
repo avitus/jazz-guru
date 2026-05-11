@@ -26,6 +26,7 @@ import uuid as uuid_mod
 from pathlib import Path
 from typing import Any, ClassVar
 
+from rich.markup import escape as markup_escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -47,6 +48,7 @@ class JazzGuruTui(App[None]):
     #side-pane { width: 1fr; border: round $accent; padding: 1; }
     #events { height: 2fr; border-bottom: solid $surface; }
     #artifacts { height: 1fr; }
+    #streaming { height: auto; max-height: 8; padding: 0 1; color: $text-muted; }
     #status-bar { height: 1; background: $boost; padding: 0 1; }
     Input { dock: bottom; }
     """
@@ -73,6 +75,11 @@ class JazzGuruTui(App[None]):
         self._ptt = PushToTalk()
         self._ptt_path: Path | None = None
         self._tasks: set[asyncio.Task[None]] = set()
+        self._chat_buf: list[str] = []
+        # Serializes _send so that an input-launched stream and a
+        # PTT-launched stream can't interleave their text_delta/manifest
+        # state through the shared chat-buf and #streaming widget.
+        self._send_lock = asyncio.Lock()
 
     # -- layout ---------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -83,6 +90,7 @@ class JazzGuruTui(App[None]):
             with Vertical(id="side-pane"):
                 yield RichLog(id="events", wrap=False, highlight=True, markup=True)
                 yield Log(id="artifacts", auto_scroll=False)
+        yield Static("", id="streaming")
         yield Static("ready", id="status-bar")
         yield Input(placeholder="type and press Enter, or hold Space to talk", id="prompt")
         yield Footer()
@@ -119,17 +127,23 @@ class JazzGuruTui(App[None]):
         await self._send(text)
 
     async def _send(self, text: str) -> None:
-        if not self._client or not self._session_id:
-            self._status("[red]not connected[/red]")
-            return
-        self._chat(f"[bold cyan]you[/bold cyan] {text}")
-        try:
-            stream = await self._client.stream_chat(self._session_id, text)
-            async for evt in stream:
-                self._handle_event(evt)
-            await self._refresh_artifacts()
-        except Exception as e:
-            self._chat(f"[red]error: {e}[/red]")
+        async with self._send_lock:
+            # Always start a turn from a clean streaming state, even if we
+            # bail out below — leftover chat-buf entries would otherwise
+            # prepend onto the next turn's deltas.
+            self._reset_streaming()
+            if not self._client or not self._session_id:
+                self._status("[red]not connected[/red]")
+                return
+            self._chat(f"[bold cyan]you[/bold cyan] {markup_escape(text)}")
+            try:
+                stream = await self._client.stream_chat(self._session_id, text)
+                async for evt in stream:
+                    self._handle_event(evt)
+                await self._refresh_artifacts()
+            except Exception as e:
+                self._chat(f"[red]error: {markup_escape(str(e))}[/red]")
+                self._reset_streaming()
 
     def _handle_event(self, evt: dict[str, Any]) -> None:
         t = evt.get("type", "?")
@@ -142,7 +156,14 @@ class JazzGuruTui(App[None]):
             self._event(f"[yellow]use[/yellow] [bold]{name}[/bold] {args}")
         elif t == "tool_result":
             ok = "[green]ok[/green]" if p.get("ok", True) else "[red]err[/red]"
-            self._event(f"     {ok} {p.get('name','?')}")
+            manifest = p.get("manifest")
+            suffix = f"  [dim]({manifest.get('size_bytes')}B → disk)[/dim]" if manifest else ""
+            self._event(f"     {ok} {p.get('name','?')}{suffix}")
+        elif t == "text_delta":
+            delta = p.get("delta", "")
+            if delta:
+                self._chat_buf.append(delta)
+                self._update_streaming("".join(self._chat_buf))
         elif t == "llm_request":
             self._event(f"[dim]→ llm round {p.get('round')}[/dim]")
         elif t == "llm_response":
@@ -156,6 +177,7 @@ class JazzGuruTui(App[None]):
             text = evt.get("text", "")
             if text:
                 self._chat(f"[bold magenta]agent[/bold magenta] {text}")
+            self._reset_streaming()
             usage = evt.get("usage", {})
             cost = usage.get("cost_usd", 0.0)
             self._status(
@@ -164,6 +186,7 @@ class JazzGuruTui(App[None]):
             )
         elif t == "error":
             self._event(f"[red]{evt.get('error','error')}[/red]")
+            self._reset_streaming()
         else:
             self._event(f"[dim]{t}[/dim] {json.dumps(p)[:120]}")
 
@@ -239,6 +262,20 @@ class JazzGuruTui(App[None]):
 
     def _status(self, line: str) -> None:
         self.query_one("#status-bar", Static).update(line)
+
+    def _update_streaming(self, text: str) -> None:
+        # Show the trailing portion so a long generation doesn't push the
+        # status bar / input off-screen. The full text lands in the chat
+        # pane on `final`. Escape Rich markup so streamed brackets like
+        # ``[red]`` aren't interpreted as styling and break the renderer.
+        tail = text[-800:]
+        self.query_one("#streaming", Static).update(
+            f"[italic dim]{markup_escape(tail)}[/italic dim]"
+        )
+
+    def _reset_streaming(self) -> None:
+        self._chat_buf.clear()
+        self.query_one("#streaming", Static).update("")
 
 
 def run(server: str = "http://127.0.0.1:8000", session: str | None = None, api_key: str | None = None) -> None:
