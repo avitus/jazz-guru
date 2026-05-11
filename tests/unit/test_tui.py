@@ -228,9 +228,14 @@ async def test_send_with_no_session_still_acquires_lock() -> None:
 @pytest.fixture(autouse=True)
 def _quiet_textual_warnings() -> Any:
     """Textual prints noisy DeprecationWarning lines via stderr in some
-    configurations; suppress them here so the test output stays clean."""
+    configurations; suppress them here so the test output stays clean.
+
+    Use ``warnings.catch_warnings()`` rather than ``simplefilter`` +
+    ``resetwarnings`` so the filter is scoped to this fixture's lifetime
+    and we don't mutate interpreter-global warning state for other tests.
+    """
     import warnings
 
-    warnings.simplefilter("ignore", DeprecationWarning)
-    yield
-    warnings.resetwarnings()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        yield
