@@ -42,9 +42,24 @@ if [[ "$PLATFORM" == "mac" ]]; then
     ok "reusing existing $PG_FORMULA"
   fi
 
+  # Self-healing `brew services start`. The launchctl bootstrap step
+  # fails with "Input/output error" (exit 5) when a stale registration
+  # for the service is still loaded in gui/<uid>. Force a bootout and
+  # retry once before giving up — this is the single most common
+  # reason ./scripts/setup.sh fails on a re-run.
+  start_service() {
+    local svc="$1"
+    if brew services start "$svc" >/dev/null 2>&1; then
+      return 0
+    fi
+    warn "brew services start $svc failed; clearing stale launchd registration"
+    launchctl bootout "gui/$(id -u)/homebrew.mxcl.$svc" >/dev/null 2>&1 || true
+    brew services start "$svc" >/dev/null
+  }
+
   bold "Starting services"
-  brew services start "$PG_FORMULA" >/dev/null
-  brew services start redis         >/dev/null
+  start_service "$PG_FORMULA"
+  start_service redis
   ok "$PG_FORMULA + redis running"
 
   PG_PREFIX="$(brew --prefix "$PG_FORMULA")"
