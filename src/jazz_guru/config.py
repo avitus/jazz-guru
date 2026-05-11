@@ -89,9 +89,15 @@ class Settings(BaseSettings):
     )
 
     # LLM
+    # The Anthropic SDK refuses non-streaming requests where the worst-case
+    # generation time exceeds 10 minutes. Per
+    # `_calculate_nonstreaming_timeout` in the SDK, the threshold is
+    # `max_tokens > 600 * 128_000 / 3600 ≈ 21333` for non-streaming. 16000
+    # leaves a safe margin. Raise this only when `complete()` is also taught
+    # to use `messages.stream(...)`.
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5"
-    anthropic_max_tokens: int = 64000
+    anthropic_max_tokens: int = 16000
 
     # Embeddings
     # provider: "auto" cascades voyage -> ollama -> hash-stub.
