@@ -1,0 +1,69 @@
+# CircleCI config for jazz-guru.
+#
+# Tests are pure-Python and do not require Postgres, Redis, FluidSynth, or
+# sfizz at runtime — the pgvector schema column is just a SQLAlchemy type
+# def, and the rendering tests cover helpers (preset loading, filter-chain
+# construction) without invoking subprocess. The one binary dep is
+# libsndfile, used by `soundfile` in test_audio.
+#
+# To enable: in CircleCI, "Set Up Project" against this repo and pick the
+# "Use existing config" option pointing at this file.
+
+version: 2.1
+
+jobs:
+  test:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: small
+    steps:
+      - checkout
+
+      - run:
+          name: System packages
+          command: |
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends libsndfile1
+
+      - restore_cache:
+          keys:
+            - v1-pip-{{ checksum "pyproject.toml" }}
+            - v1-pip-
+
+      - run:
+          name: Install project (editable, with dev extras)
+          command: |
+            python -m venv .venv
+            .venv/bin/pip install --upgrade pip
+            .venv/bin/pip install -e ".[dev]"
+
+      - save_cache:
+          # Cache only the pip wheel cache, not the venv itself: cached
+          # `.venv` directories can become brittle across base-image or
+          # python patch updates (paths embedded in shebangs / .pyc, etc.).
+          # Wheels are portable enough and re-installs are fast.
+          key: v1-pip-{{ checksum "pyproject.toml" }}
+          paths:
+            - ~/.cache/pip
+
+      - run:
+          name: Ruff lint
+          command: .venv/bin/ruff check src tests
+
+      - run:
+          name: Mypy type check
+          command: .venv/bin/mypy src
+
+      - run:
+          name: Pytest
+          command: |
+            mkdir -p test-results
+            .venv/bin/pytest -q --junitxml=test-results/pytest.xml
+
+      - store_test_results:
+          path: test-results
+
+workflows:
+  ci:
+    jobs:
+      - test

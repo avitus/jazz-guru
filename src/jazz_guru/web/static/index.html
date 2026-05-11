@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>jazz-guru</title>
+<link rel="stylesheet" href="./app.css" />
+<link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+<!-- OpenSheetMusicDisplay for MusicXML rendering -->
+<script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.5/build/opensheetmusicdisplay.min.js"></script>
+</head>
+<body>
+<header>
+  <div class="brand">jazz-guru</div>
+  <div class="meta">
+    <span id="session-label">no session</span>
+    <span id="status">disconnected</span>
+  </div>
+  <div class="actions">
+    <button id="new-session">new session</button>
+    <label class="rec-btn">
+      <button id="rec-toggle" type="button">● record</button>
+    </label>
+  </div>
+</header>
+
+<main>
+  <section class="chat">
+    <div id="messages" class="messages"></div>
+    <form id="composer">
+      <input id="input" type="text" placeholder="ask the agent — try: compose a 4-bar Cmaj7 arpeggio as out/arp.mid" autocomplete="off" />
+      <button type="submit">send</button>
+    </form>
+  </section>
+
+  <div id="gutter" class="gutter" role="separator" aria-orientation="vertical" aria-label="Resize chat / panels divider" tabindex="0"></div>
+
+  <section class="panels">
+    <div class="panel">
+      <header>events</header>
+      <div id="events" class="events"></div>
+    </div>
+    <div class="panel">
+      <header>artifacts</header>
+      <div id="artifacts" class="artifacts"></div>
+    </div>
+    <div class="panel">
+      <header>score</header>
+      <div id="score" class="score"></div>
+    </div>
+    <div class="panel">
+      <header>player</header>
+      <div id="player" class="player">
+        <audio id="audio" controls></audio>
+        <div id="now-playing" class="hint">drop a .wav/.flac in artifacts to play</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="./app.js" defer></script>
+</body>
+</html>

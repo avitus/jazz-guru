@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from jazz_guru.config import GoalConfig, get_goal
+
+_TOOL_CREATION_HINT = """
+---
+## Authoring your own tools
+You can create new tools at runtime when none of the existing ones fit:
+
+- `tool_create(name, description, input_schema, source)` — register a new tool
+  for THIS session. The source must define `def run(**kwargs)` (sync or async),
+  and runs in a sandboxed subprocess (cwd = session workspace) by default.
+  After this returns ok, call the new tool by `name`.
+- `tool_publish(name)` — persist a session tool to the database so it survives
+  restarts and is available to all future sessions.
+- `tool_promote_to_source(name)` — write the tool into the package source tree
+  (Tier 3, requires server restart to take effect).
+- `tool_remove(name, also_global=False)` — drop a tool.
+- `tool_list_dynamic()` / `tool_inspect(name)` — introspection.
+
+Prefer building a small, focused tool over inlining ad hoc python_exec calls
+when the same operation will recur. After creating a tool, immediately call
+it on a sample input to verify it works; iterate if not.
+""".strip()
+
+
+@dataclass
+class Prompt:
+    system: str
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class BuildInputs:
+    user_message: dict[str, Any] | str
+    history: list[dict[str, Any]] = field(default_factory=list)  # [{role,content}]
+    state_doc: str | None = None
+    retrieved_memory: list[str] = field(default_factory=list)
+    playbook_excerpts: list[str] = field(default_factory=list)
+    extra_system: str | None = None
+
+
+class ContextBuilder:
+    """Assemble the system prompt and message list for the LLM."""
+
+    def __init__(self, goal: GoalConfig | None = None) -> None:
+        self.goal = goal or get_goal()
+
+    def build(self, inputs: BuildInputs) -> Prompt:
+        sys_parts: list[str] = []
+        sys_parts.append(self.goal.render_system_block())
+        sys_parts.append(_TOOL_CREATION_HINT)
+        if inputs.state_doc:
+            sys_parts.append("\n---\n## Externalized state (self-model)\n" + inputs.state_doc.strip())
+        if inputs.playbook_excerpts:
+            sys_parts.append("\n---\n## Playbook (durable lessons)\n" + "\n".join(f"- {p}" for p in inputs.playbook_excerpts))
+        if inputs.retrieved_memory:
+            sys_parts.append("\n---\n## Retrieved memory\n" + "\n".join(f"- {m}" for m in inputs.retrieved_memory))
+        if inputs.extra_system:
+            sys_parts.append("\n---\n" + inputs.extra_system.strip())
+
+        messages: list[dict[str, Any]] = []
+        messages.extend(inputs.history)
+        if isinstance(inputs.user_message, str):
+            messages.append({"role": "user", "content": inputs.user_message})
+        else:
+            messages.append(dict(inputs.user_message))
+
+        return Prompt(
+            system="\n".join(sys_parts).strip(),
+            messages=messages,
+            metadata={
+                "goal_profile": self.goal.profile,
+                "history_len": len(inputs.history),
+                "memory_items": len(inputs.retrieved_memory),
+                "playbook_items": len(inputs.playbook_excerpts),
+            },
+        )
