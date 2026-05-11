@@ -126,6 +126,74 @@ async def test_complete_stream_passes_args_to_sdk(patched_client: dict[str, Any]
     assert kw["tools"][0]["name"] == "noop"
 
 
+async def test_complete_stream_omits_optional_kwargs_when_unset(
+    patched_client: dict[str, Any],
+) -> None:
+    """system / tools / tool_choice should not appear in kwargs when caller
+    leaves them at their defaults — otherwise we'd send empty-list tools to
+    the SDK and confuse models that have no tools available."""
+    async for _ in complete_stream(messages=[{"role": "user", "content": "hi"}]):
+        pass
+    kw = patched_client["captured"]["kwargs"]
+    assert "system" not in kw
+    assert "tools" not in kw
+    assert "tool_choice" not in kw
+
+
+async def test_complete_stream_extracts_tool_uses_from_final_message(
+    patched_client: dict[str, Any],
+) -> None:
+    """The final message can carry both text and tool_use blocks. Both must
+    end up in the LLMResponse — text in .text, tool_uses parsed out."""
+    final = _FakeMessage(
+        text="thinking",
+        tool_uses=[_FakeToolUse(type="tool_use", id="tu_42", name="my_tool", input={"a": 1})],
+        stop_reason="tool_use",
+    )
+    patched_client["state"]["deltas"] = ["thinking"]
+    patched_client["state"]["final"] = final
+
+    events = [evt async for evt in complete_stream(messages=[{"role": "user", "content": "hi"}])]
+    done = [e for e in events if e["type"] == "done"]
+    assert len(done) == 1
+    resp: LLMResponse = done[0]["response"]
+    assert resp.text == "thinking"
+    assert resp.stop_reason == "tool_use"
+    assert resp.tool_uses == [{"id": "tu_42", "name": "my_tool", "input": {"a": 1}}]
+
+
+async def test_complete_stream_skips_empty_text_deltas(
+    patched_client: dict[str, Any],
+) -> None:
+    """Empty deltas (occasional zero-width chunks from the SDK) must not be
+    forwarded as text_delta events — they'd produce visible no-op flicker
+    in the TUI."""
+    patched_client["state"]["deltas"] = ["", "hi", ""]
+    patched_client["state"]["final"] = _FakeMessage("hi")
+
+    events = [evt async for evt in complete_stream(messages=[{"role": "user", "content": "hi"}])]
+    deltas = [e["delta"] for e in events if e["type"] == "text_delta"]
+    assert deltas == ["hi"]
+
+
+async def test_complete_stream_tool_use_only_no_text(
+    patched_client: dict[str, Any],
+) -> None:
+    """If the model only emits a tool_use (no text), we should still get a
+    well-formed done event with an empty .text and the tool populated."""
+    patched_client["state"]["deltas"] = []
+    patched_client["state"]["final"] = _FakeMessage(
+        text="",
+        tool_uses=[_FakeToolUse(type="tool_use", id="t1", name="x", input={})],
+        stop_reason="tool_use",
+    )
+    events = [evt async for evt in complete_stream(messages=[{"role": "user", "content": "hi"}])]
+    assert [e["type"] for e in events] == ["done"]
+    resp = events[0]["response"]
+    assert resp.text == ""
+    assert resp.tool_uses[0]["name"] == "x"
+
+
 async def test_controller_emits_text_deltas_and_invokes_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     """Drive ActionController.run against a stub complete_stream that yields
     text + a single tool_use, then a final end_turn."""
@@ -276,3 +344,55 @@ async def test_controller_pruning_emits_manifest(
     assert "manifest" in tr[0]
     assert tr[0]["manifest"]["tool"] == "blobber"
     assert tr[0]["manifest"]["size_bytes"] >= 50_000
+
+
+async def test_controller_handles_stream_with_no_done_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the stream ends without yielding a done event (network truncation,
+    SDK bug), the controller must fail fast with a recorded error rather
+    than continuing with a stale resp from a previous round."""
+
+    async def fake_stream(messages: list[dict[str, Any]], **kw: Any) -> AsyncIterator[dict[str, Any]]:
+        if False:  # pragma: no cover  -- need an async generator
+            yield {}
+
+    import jazz_guru.actions.controller as ctl
+
+    monkeypatch.setattr(ctl, "complete_stream", fake_stream)
+
+    controller = ActionController(registry=ToolRegistry(), policy=Policy(default="allow"))
+    res: RunResult = await controller.run(
+        system="x", messages=[{"role": "user", "content": "go"}]
+    )
+    assert res.errors
+    assert "stream ended without" in res.errors[0]
+    assert res.final_text == ""
+
+
+async def test_controller_captures_stream_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exception thrown by the stream itself goes into result.errors and
+    fires an error event, but doesn't take down the loop."""
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    async def fake_stream(messages: list[dict[str, Any]], **kw: Any) -> AsyncIterator[dict[str, Any]]:
+        raise RuntimeError("simulated upstream 500")
+        yield {}  # pragma: no cover  -- unreachable but makes this an async gen
+
+    import jazz_guru.actions.controller as ctl
+
+    monkeypatch.setattr(ctl, "complete_stream", fake_stream)
+
+    controller = ActionController(
+        registry=ToolRegistry(),
+        policy=Policy(default="allow"),
+        on_event=lambda n, p: captured.append((n, p)),
+    )
+    res: RunResult = await controller.run(
+        system="x", messages=[{"role": "user", "content": "go"}]
+    )
+    assert any("simulated upstream 500" in e for e in res.errors)
+    err_events = [p for n, p in captured if n == "error"]
+    assert err_events and err_events[0]["phase"] == "llm"

@@ -122,11 +122,14 @@ class JazzGuruTui(App[None]):
         await self._send(text)
 
     async def _send(self, text: str) -> None:
+        # Always start a turn from a clean streaming state, even if we bail
+        # out below — leftover chat-buf entries would otherwise prepend onto
+        # the next turn's deltas.
+        self._reset_streaming()
         if not self._client or not self._session_id:
             self._status("[red]not connected[/red]")
             return
         self._chat(f"[bold cyan]you[/bold cyan] {text}")
-        self._reset_streaming()
         try:
             stream = await self._client.stream_chat(self._session_id, text)
             async for evt in stream:
