@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     # LLM
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5"
-    anthropic_max_tokens: int = 8192
+    anthropic_max_tokens: int = 16000
 
     # Embeddings
     voyage_api_key: str = ""
