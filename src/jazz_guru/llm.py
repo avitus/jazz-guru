@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
@@ -13,6 +15,9 @@ from tenacity import (
 )
 
 from jazz_guru.config import get_settings
+
+DeltaPayload = dict[str, Any]
+OnDelta = Callable[[DeltaPayload], Awaitable[None] | None]
 
 
 @dataclass
@@ -75,7 +80,24 @@ async def complete(
     max_tokens: int | None = None,
     temperature: float = 0.7,
     model: str | None = None,
+    on_delta: OnDelta | None = None,
 ) -> LLMResponse:
+    """Issue a Messages call via the streaming API.
+
+    Streaming is used unconditionally — it removes the SDK's ~21k non-streaming
+    token guard and lets callers tap incremental events via ``on_delta``. The
+    returned :class:`LLMResponse` is assembled from the final accumulated
+    message, so callers that don't need streaming UX can ignore ``on_delta``
+    and treat this function identically to the previous non-streaming version.
+
+    ``on_delta`` receives one of:
+
+    - ``{"type": "text", "index": int, "text": str}`` for each text-token delta
+    - ``{"type": "input_json", "index": int, "partial_json": str}`` for each
+      streamed chunk of a tool-use input
+
+    The callback may be sync or async; both are awaited if needed.
+    """
     settings = get_settings()
     client = get_client()
     kwargs: dict[str, Any] = {
@@ -91,11 +113,24 @@ async def complete(
     if tool_choice:
         kwargs["tool_choice"] = tool_choice
 
-    msg = await client.messages.create(**kwargs)
+    async with client.messages.stream(**kwargs) as stream:
+        if on_delta is not None:
+            async for event in stream:
+                payload = _delta_payload(event)
+                if payload is None:
+                    continue
+                ret = on_delta(payload)
+                if inspect.isawaitable(ret):
+                    await ret
+        msg = await stream.get_final_message()
 
     text_chunks: list[str] = []
     tool_uses: list[dict[str, Any]] = []
-    for block in msg.content:
+    # ``msg.content`` is a discriminated union (TextBlock | ToolUseBlock | ...);
+    # we duck-type by the ``type`` tag rather than maintaining an exhaustive
+    # isinstance ladder, so we widen to Any inside the loop.
+    for raw_block in msg.content:
+        block: Any = raw_block
         btype = getattr(block, "type", None)
         if btype == "text":
             text_chunks.append(block.text)
@@ -115,6 +150,25 @@ async def complete(
         stop_reason=msg.stop_reason,
         usage=usage,
     )
+
+
+def _delta_payload(event: Any) -> DeltaPayload | None:
+    """Translate a raw stream event into the small public payload, or None.
+
+    Only content_block_delta events carry incremental content; everything else
+    (message_start, content_block_start/stop, message_delta, message_stop) is
+    structural and we let it flow into ``get_final_message``.
+    """
+    if getattr(event, "type", None) != "content_block_delta":
+        return None
+    delta = getattr(event, "delta", None)
+    dtype = getattr(delta, "type", None)
+    index = getattr(event, "index", 0)
+    if dtype == "text_delta":
+        return {"type": "text", "index": index, "text": getattr(delta, "text", "")}
+    if dtype == "input_json_delta":
+        return {"type": "input_json", "index": index, "partial_json": getattr(delta, "partial_json", "")}
+    return None
 
 
 async def health_check_detailed() -> tuple[bool, str]:

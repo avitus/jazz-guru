@@ -89,6 +89,14 @@ class ActionController:
             tools = self.registry.to_anthropic(allowed=allowed)
             result.rounds = round_idx + 1
             self._emit("llm_request", {"round": round_idx, "messages_len": len(result.messages)})
+
+            def _on_delta(payload: dict[str, Any], _round: int = round_idx) -> None:
+                # _round binds the current iteration's round_idx into the closure
+                # so deltas from a stalled round can't get tagged with a later
+                # round's number if the controller is reused. (Defensive — in
+                # practice rounds are strictly sequential.)
+                self._emit("llm_delta", {"round": _round, **payload})
+
             try:
                 resp: LLMResponse = await complete(
                     result.messages,
@@ -96,6 +104,7 @@ class ActionController:
                     tools=tools,
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    on_delta=_on_delta,
                 )
             except Exception as e:
                 err = f"llm error: {e}"
