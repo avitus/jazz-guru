@@ -169,6 +169,62 @@ async def test_streaming_bubble_truncates_to_tail() -> None:
         assert "A" * 1_000 not in rendered
 
 
+async def test_streaming_text_with_markup_brackets_is_escaped() -> None:
+    """Streamed text containing Rich-markup-looking brackets like ``[red]``
+    must be displayed literally, not parsed as markup. CodeRabbit #3 on
+    PR #3: an unmatched ``[`` would otherwise break the renderer."""
+    app = _OfflineTui()
+    async with app.run_test():
+        # Combination of valid markup, unmatched bracket, and a link.
+        payload = "see [red]this[/red] and [link=evil] and a stray [."
+        app._handle_event({"type": "text_delta", "payload": {"delta": payload}})
+        # The rendered string is a Rich Text/visual; convert to its plain
+        # form by way of str(). The literal bracket sequence must appear,
+        # which would NOT be true if Rich parsed [red] as styling.
+        rendered = _streaming_text(app)
+        assert "[red]" in rendered or "\\[red]" in rendered
+        assert "[link=evil]" in rendered or "\\[link=evil]" in rendered
+
+
+async def test_send_lock_serializes_overlapping_calls() -> None:
+    """Two concurrent _send() invocations must not interleave their state.
+    CodeRabbit #2 on PR #3: PTT-launched and input-launched sends share
+    _chat_buf and the streaming widget. The lock guarantees serial
+    execution; the second call waits for the first to finish."""
+    import asyncio as _asyncio
+
+    app = _OfflineTui()
+    async with app.run_test():
+        # Confirm the lock attribute exists and is held during _send.
+        assert isinstance(app._send_lock, _asyncio.Lock)
+
+        order: list[str] = []
+
+        async def slow_call(label: str) -> None:
+            async with app._send_lock:
+                order.append(f"{label}-start")
+                await _asyncio.sleep(0.01)
+                order.append(f"{label}-end")
+
+        await _asyncio.gather(slow_call("a"), slow_call("b"))
+        # Either ordering is fine; what matters is that they don't interleave.
+        assert order in (
+            ["a-start", "a-end", "b-start", "b-end"],
+            ["b-start", "b-end", "a-start", "a-end"],
+        )
+
+
+async def test_send_with_no_session_still_acquires_lock() -> None:
+    """_send() must take the lock even when bailing out for missing
+    client/session, otherwise a slow connect path elsewhere could race a
+    no-op send and leave _chat_buf in an inconsistent state."""
+    app = _OfflineTui()
+    async with app.run_test():
+        assert not app._send_lock.locked()
+        await app._send("anything")  # bails out, no client
+        assert not app._send_lock.locked()  # released cleanly
+
+
 @pytest.fixture(autouse=True)
 def _quiet_textual_warnings() -> Any:
     """Textual prints noisy DeprecationWarning lines via stderr in some

@@ -26,6 +26,7 @@ import uuid as uuid_mod
 from pathlib import Path
 from typing import Any, ClassVar
 
+from rich.markup import escape as markup_escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -75,6 +76,10 @@ class JazzGuruTui(App[None]):
         self._ptt_path: Path | None = None
         self._tasks: set[asyncio.Task[None]] = set()
         self._chat_buf: list[str] = []
+        # Serializes _send so that an input-launched stream and a
+        # PTT-launched stream can't interleave their text_delta/manifest
+        # state through the shared chat-buf and #streaming widget.
+        self._send_lock = asyncio.Lock()
 
     # -- layout ---------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -122,22 +127,23 @@ class JazzGuruTui(App[None]):
         await self._send(text)
 
     async def _send(self, text: str) -> None:
-        # Always start a turn from a clean streaming state, even if we bail
-        # out below — leftover chat-buf entries would otherwise prepend onto
-        # the next turn's deltas.
-        self._reset_streaming()
-        if not self._client or not self._session_id:
-            self._status("[red]not connected[/red]")
-            return
-        self._chat(f"[bold cyan]you[/bold cyan] {text}")
-        try:
-            stream = await self._client.stream_chat(self._session_id, text)
-            async for evt in stream:
-                self._handle_event(evt)
-            await self._refresh_artifacts()
-        except Exception as e:
-            self._chat(f"[red]error: {e}[/red]")
+        async with self._send_lock:
+            # Always start a turn from a clean streaming state, even if we
+            # bail out below — leftover chat-buf entries would otherwise
+            # prepend onto the next turn's deltas.
             self._reset_streaming()
+            if not self._client or not self._session_id:
+                self._status("[red]not connected[/red]")
+                return
+            self._chat(f"[bold cyan]you[/bold cyan] {markup_escape(text)}")
+            try:
+                stream = await self._client.stream_chat(self._session_id, text)
+                async for evt in stream:
+                    self._handle_event(evt)
+                await self._refresh_artifacts()
+            except Exception as e:
+                self._chat(f"[red]error: {markup_escape(str(e))}[/red]")
+                self._reset_streaming()
 
     def _handle_event(self, evt: dict[str, Any]) -> None:
         t = evt.get("type", "?")
@@ -260,9 +266,12 @@ class JazzGuruTui(App[None]):
     def _update_streaming(self, text: str) -> None:
         # Show the trailing portion so a long generation doesn't push the
         # status bar / input off-screen. The full text lands in the chat
-        # pane on `final`.
+        # pane on `final`. Escape Rich markup so streamed brackets like
+        # ``[red]`` aren't interpreted as styling and break the renderer.
         tail = text[-800:]
-        self.query_one("#streaming", Static).update(f"[italic dim]{tail}[/italic dim]")
+        self.query_one("#streaming", Static).update(
+            f"[italic dim]{markup_escape(tail)}[/italic dim]"
+        )
 
     def _reset_streaming(self) -> None:
         self._chat_buf.clear()

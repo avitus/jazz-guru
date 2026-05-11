@@ -176,6 +176,110 @@ async def test_complete_stream_skips_empty_text_deltas(
     assert deltas == ["hi"]
 
 
+async def test_complete_stream_retries_transient_open_failure(
+    patched_client: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pre-first-delta open phase goes through the same tenacity policy
+    as ``complete``. CodeRabbit #4 on PR #3: a transient APIConnectionError
+    on the first attempt should be retried, and the second attempt's stream
+    delivered to the caller."""
+    import anthropic as _anthropic
+
+    state = patched_client["state"]
+    state["deltas"] = ["ok"]
+    state["final"] = _FakeMessage("ok")
+
+    attempts = {"n": 0}
+
+    class _FailingThenOkStream(_FakeStream):
+        async def __aenter__(self) -> _FakeStream:
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise _anthropic.APIConnectionError(
+                    request=SimpleNamespace()  # type: ignore[arg-type]
+                )
+            return self
+
+    def fake_stream(**kwargs: Any) -> _FakeStream:
+        return _FailingThenOkStream(state["deltas"], state["final"])
+
+    fake_messages = SimpleNamespace(stream=fake_stream)
+    fake_client = SimpleNamespace(messages=fake_messages)
+    monkeypatch.setattr(llm, "get_client", lambda: fake_client)
+
+    # Patch tenacity's wait so the test doesn't actually sleep through the
+    # exponential backoff configured on _open_stream.
+    monkeypatch.setattr(
+        llm._open_stream.retry, "wait", lambda retry_state: 0  # type: ignore[attr-defined]
+    )
+
+    events = [evt async for evt in complete_stream(messages=[{"role": "user", "content": "hi"}])]
+    assert attempts["n"] == 2
+    assert any(e["type"] == "done" for e in events)
+
+
+async def test_complete_stream_propagates_non_retryable_open_failure(
+    patched_client: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-retryable error during open (e.g. a plain RuntimeError) must
+    surface to the caller after a single attempt — tenacity's retry filter
+    only catches the listed Anthropic exception types."""
+
+    class _BoomStream(_FakeStream):
+        async def __aenter__(self) -> _FakeStream:
+            raise RuntimeError("not the network")
+
+    state = patched_client["state"]
+
+    def fake_stream(**kwargs: Any) -> _FakeStream:
+        return _BoomStream(state["deltas"], state["final"])
+
+    fake_messages = SimpleNamespace(stream=fake_stream)
+    fake_client = SimpleNamespace(messages=fake_messages)
+    monkeypatch.setattr(llm, "get_client", lambda: fake_client)
+
+    with pytest.raises(RuntimeError, match="not the network"):
+        async for _ in complete_stream(messages=[{"role": "user", "content": "hi"}]):
+            pass
+
+
+async def test_complete_stream_calls_aexit_on_iteration_failure(
+    patched_client: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If iteration throws after the stream is open, ``__aexit__`` must
+    still run so the underlying HTTP connection is released."""
+    aexit_calls = {"n": 0}
+
+    class _IterFailStream(_FakeStream):
+        async def __aenter__(self) -> _FakeStream:
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            aexit_calls["n"] += 1
+
+        def __aiter__(self) -> AsyncIterator[Any]:
+            async def gen() -> AsyncIterator[Any]:
+                if False:  # pragma: no cover
+                    yield None
+                raise RuntimeError("stream broke mid-iter")
+
+            return gen()
+
+    state = patched_client["state"]
+
+    def fake_stream(**kwargs: Any) -> _FakeStream:
+        return _IterFailStream(state["deltas"], state["final"])
+
+    fake_messages = SimpleNamespace(stream=fake_stream)
+    fake_client = SimpleNamespace(messages=fake_messages)
+    monkeypatch.setattr(llm, "get_client", lambda: fake_client)
+
+    with pytest.raises(RuntimeError, match="stream broke mid-iter"):
+        async for _ in complete_stream(messages=[{"role": "user", "content": "hi"}]):
+            pass
+    assert aexit_calls["n"] == 1
+
+
 async def test_complete_stream_tool_use_only_no_text(
     patched_client: dict[str, Any],
 ) -> None:

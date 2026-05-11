@@ -118,6 +118,35 @@ async def complete(
     )
 
 
+@retry(
+    reraise=True,
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=0.5, min=0.5, max=10),
+    retry=retry_if_exception_type(
+        (
+            anthropic.APIConnectionError,
+            anthropic.APITimeoutError,
+            anthropic.RateLimitError,
+            anthropic.InternalServerError,
+        )
+    ),
+)
+async def _open_stream(
+    client: anthropic.AsyncAnthropic, kwargs: dict[str, Any]
+) -> tuple[Any, Any]:
+    """Open a streaming response with the same tenacity policy as ``complete``.
+
+    Returns ``(manager, stream)``. The HTTP request happens inside
+    ``__aenter__``, so retrying that call retries connect / TLS / 5xx /
+    rate-limit errors before any deltas have been observed by the caller.
+    Mid-stream errors after the first delta are NOT retried here — that
+    would replay text the caller has already seen.
+    """
+    manager = client.messages.stream(**kwargs)
+    stream = await manager.__aenter__()
+    return manager, stream
+
+
 async def complete_stream(
     messages: list[dict[str, Any]],
     *,
@@ -134,9 +163,10 @@ async def complete_stream(
       - {"type": "text_delta", "delta": str}
       - {"type": "done", "response": LLMResponse}
 
-    Retries are NOT applied here; transient failures during streaming would
-    leave partial deltas already shipped to the caller. The caller (typically
-    ``ActionController.run``) handles errors at the turn level instead.
+    The pre-first-delta phase (HTTP connect, auth, initial response) goes
+    through the same tenacity retry policy as ``complete``. Once the stream
+    starts producing deltas, errors are surfaced to the caller without
+    retry — a mid-stream restart would replay text already shipped.
     """
     settings = get_settings()
     client = get_client()
@@ -153,7 +183,8 @@ async def complete_stream(
     if tool_choice:
         kwargs["tool_choice"] = tool_choice
 
-    async with client.messages.stream(**kwargs) as stream:
+    manager, stream = await _open_stream(client, kwargs)
+    try:
         async for evt in stream:
             if getattr(evt, "type", None) == "text":
                 # Helper events expose ``.text`` for content_block_delta of
@@ -164,6 +195,8 @@ async def complete_stream(
                 if delta:
                     yield {"type": "text_delta", "delta": delta}
         msg = await stream.get_final_message()
+    finally:
+        await manager.__aexit__(None, None, None)
 
     text_chunks: list[str] = []
     tool_uses: list[dict[str, Any]] = []

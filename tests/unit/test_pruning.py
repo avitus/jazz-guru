@@ -280,7 +280,10 @@ def test_generic_dict_preserves_none_values(isolated_workspace: Path) -> None:
 
 def test_pruning_threshold_zero_always_prunes(isolated_workspace: Path) -> None:
     """A 0-byte threshold should force every result to disk, even {} —
-    useful for stress tests / debugging that want to verify the pipeline."""
+    useful for stress tests / debugging that want to verify the pipeline.
+    Because the handler's output is itself over budget at threshold=0, the
+    post-handler size check kicks in and replaces the result with a generic
+    preview pointing at the full payload on disk."""
     value = {"x": 1}
     visible, manifest = prune_tool_result(
         "fs_read",
@@ -290,7 +293,8 @@ def test_pruning_threshold_zero_always_prunes(isolated_workspace: Path) -> None:
         default_max_bytes=10_000,
     )
     assert manifest is not None
-    assert "truncated_to_disk" not in visible or visible.get("content")  # content field reshaped
+    assert visible["truncated_to_disk"] is True
+    assert visible["full_path"] == manifest["path"]
 
 
 def test_size_bytes_counts_utf8_not_chars(isolated_workspace: Path) -> None:
@@ -363,6 +367,49 @@ def test_serialization_failure_falls_back_to_repr(isolated_workspace: Path) -> N
     assert manifest is not None
     # Generic summary stringifies it via repr → preview should reflect that.
     assert visible["truncated_to_disk"] is True
+
+
+def test_handler_output_over_budget_falls_back_to_generic(isolated_workspace: Path) -> None:
+    """``_handle_http`` keeps full ``headers`` verbatim. If headers alone
+    exceed the budget, the post-handler size check must kick in and
+    replace the visible value with a generic preview rather than letting
+    the over-budget structure leak through (CodeRabbit #1 on PR #3)."""
+    huge_headers = {f"x-h-{i}": "v" * 200 for i in range(60)}  # ~12KB just in headers
+    value = {
+        "status_code": 200,
+        "headers": huge_headers,
+        "body": "small",
+        "truncated": False,
+        "final_url": "https://x/",
+    }
+    visible, manifest = prune_tool_result(
+        "http_get",
+        value,
+        ctx=_ctx(),
+        policy=ToolPolicy(max_result_bytes=2_000),
+        default_max_bytes=10_000,
+    )
+    assert manifest is not None
+    # Visible payload is now within budget — the handler's output exceeded
+    # it, so the fallback _prune_string was applied.
+    import json as _j
+    visible_size = len(_j.dumps(visible, default=str).encode("utf-8"))
+    assert visible_size <= 2_000
+
+
+def test_http_error_response_under_threshold_passes_through(isolated_workspace: Path) -> None:
+    """An error response is small and well under any reasonable threshold;
+    it should not trigger pruning at all (early return)."""
+    value = {"error": "blocked", "reason": "private IP"}
+    visible, manifest = prune_tool_result(
+        "http_get",
+        value,
+        ctx=_ctx(),
+        policy=ToolPolicy(max_result_bytes=10_000),
+        default_max_bytes=10_000,
+    )
+    assert manifest is None
+    assert visible is value
 
 
 def test_tool_outputs_directory_created_lazily(isolated_workspace: Path) -> None:

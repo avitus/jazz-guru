@@ -167,5 +167,11 @@ def prune_tool_result(
         visible = handler(value, full_path)
     else:
         visible = _generic_summary(value, full_path)
+    # Belt-and-suspenders: a handler may legitimately keep large structures
+    # (HTTP headers, error payloads, deeply nested scalars) that still bust
+    # the budget. Force a generic preview if the handler's output is itself
+    # over-budget — the cap is the contract this helper has to honor.
+    if len(_serialize(visible).encode("utf-8")) > threshold:
+        visible = _prune_string(serialized, full_path)
     manifest = {"path": str(full_path), "size_bytes": size, "tool": name}
     return visible, manifest
