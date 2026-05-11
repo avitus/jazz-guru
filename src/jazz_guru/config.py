@@ -94,10 +94,17 @@ class Settings(BaseSettings):
     anthropic_max_tokens: int = 64000
 
     # Embeddings
+    # provider: "auto" cascades voyage -> ollama -> hash-stub.
+    # Pin to one of "voyage" / "ollama" / "hash" to disable the cascade.
     voyage_api_key: str = ""
-    embedding_provider: str = "voyage"
+    embedding_provider: str = "auto"
     embedding_model: str = "voyage-3"
     embedding_dim: int = 1024
+
+    # Ollama (local embeddings backend, used by "auto" and "ollama")
+    ollama_url: str = "http://localhost:11434"
+    ollama_embedding_model: str = "mxbai-embed-large"
+    ollama_probe_timeout_s: float = 0.75
 
     # Database (local Postgres, peer/trust auth as current user)
     database_url: str = "postgresql+asyncpg:///jazz_guru"
