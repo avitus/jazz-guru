@@ -42,9 +42,79 @@ if [[ "$PLATFORM" == "mac" ]]; then
     ok "reusing existing $PG_FORMULA"
   fi
 
+  # Self-healing service start. `brew services start <svc>` can fail
+  # with `Bootstrap failed: 5: Input/output error` for several reasons.
+  # The most common one in practice: another process is already bound
+  # to the service's port (e.g. a manual `redis-server` left behind
+  # from a previous unblock attempt). launchd spawns its own copy, the
+  # spawn exits immediately because the port is taken, and bootstrap
+  # reports failure — followed by an indefinite spawn-retry loop
+  # visible in `log show --predicate 'process=="launchd"'`.
+  # Less common: stale registration in gui/<uid>, the service disabled
+  # in user-launchd state, or a corrupt plist that bootout won't fix.
+  #
+  # Strategy:
+  #   0. If the service's port is already listening, declare victory.
+  #      The agent only cares that something is answering on the right
+  #      socket — not whether launchd is the parent.
+  #   1. brew services start.
+  #   2. bootout + enable + retry.
+  #   3. delete the user-level plist + retry.
+  #   4. spawn the daemon directly (only when caller provided a
+  #      fallback command + probe).
+  start_service() {
+    local svc="$1"
+    local cmd_fallback="${2:-}"
+    local probe="${3:-}"
+
+    # Already up? Done.
+    if [[ -n "$probe" ]] && eval "$probe" >/dev/null 2>&1; then
+      ok "$svc already listening"
+      return 0
+    fi
+
+    if brew services start "$svc" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    warn "brew services start $svc failed; clearing stale launchd state"
+    launchctl bootout "gui/$(id -u)/homebrew.mxcl.$svc" >/dev/null 2>&1 || true
+    launchctl enable  "gui/$(id -u)/homebrew.mxcl.$svc" >/dev/null 2>&1 || true
+    if brew services start "$svc" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    # Some installs end up with a plist launchd won't accept; remove
+    # it so the next brew services start regenerates from the formula.
+    if [[ -f "$HOME/Library/LaunchAgents/homebrew.mxcl.$svc.plist" ]]; then
+      warn "removing $HOME/Library/LaunchAgents/homebrew.mxcl.$svc.plist and retrying"
+      rm -f "$HOME/Library/LaunchAgents/homebrew.mxcl.$svc.plist"
+      if brew services start "$svc" >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+
+    # Last resort: run the daemon directly, bypassing launchd. Only
+    # applies when the caller provided a fallback command + probe.
+    if [[ -n "$cmd_fallback" && -n "$probe" ]]; then
+      warn "launchd will not bootstrap $svc; starting daemon directly"
+      eval "$cmd_fallback"
+      sleep 1
+      eval "$probe" >/dev/null 2>&1 || die "$svc failed to come up under the fallback launcher"
+      ok "$svc running (not under launchd)"
+      return 0
+    fi
+    die "could not start $svc (brew services exited non-zero and no fallback configured)"
+  }
+
   bold "Starting services"
-  brew services start "$PG_FORMULA" >/dev/null
-  brew services start redis         >/dev/null
+  start_service "$PG_FORMULA"
+  # Redis fallback: spawn redis-server detached on 127.0.0.1:6379 with
+  # the daemonize flag. Matches the local-dev assumption (loopback only).
+  REDIS_BIN="$(brew --prefix redis 2>/dev/null)/bin/redis-server"
+  start_service redis \
+    "nohup '$REDIS_BIN' --daemonize yes --port 6379 --bind 127.0.0.1 >/dev/null 2>&1" \
+    "lsof -nP -iTCP:6379 -sTCP:LISTEN"
   ok "$PG_FORMULA + redis running"
 
   PG_PREFIX="$(brew --prefix "$PG_FORMULA")"
