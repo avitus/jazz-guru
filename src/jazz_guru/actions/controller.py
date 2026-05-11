@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from jazz_guru.actions.context import current as current_tool_ctx
+from jazz_guru.actions.pruning import prune_tool_result
 from jazz_guru.actions.registry import ToolRegistry, register_all
 from jazz_guru.config import Policy, get_policy, get_settings
-from jazz_guru.llm import LLMResponse, LLMUsage, complete
+from jazz_guru.llm import LLMResponse, LLMUsage, complete_stream
 from jazz_guru.logging import get_logger
 
 log = get_logger(__name__)
@@ -89,16 +91,26 @@ class ActionController:
             tools = self.registry.to_anthropic(allowed=allowed)
             result.rounds = round_idx + 1
             self._emit("llm_request", {"round": round_idx, "messages_len": len(result.messages)})
+            resp: LLMResponse | None = None
             try:
-                resp: LLMResponse = await complete(
+                async for evt in complete_stream(
                     result.messages,
                     system=system,
                     tools=tools,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                )
+                ):
+                    if evt["type"] == "text_delta":
+                        self._emit("text_delta", {"round": round_idx, "delta": evt["delta"]})
+                    elif evt["type"] == "done":
+                        resp = evt["response"]
             except Exception as e:
                 err = f"llm error: {e}"
+                result.errors.append(err)
+                self._emit("error", {"phase": "llm", "error": err})
+                break
+            if resp is None:
+                err = "llm stream ended without a final response"
                 result.errors.append(err)
                 self._emit("error", {"phase": "llm", "error": err})
                 break
@@ -155,12 +167,22 @@ class ActionController:
                 self._emit("tool_use", {"id": tu["id"], "name": tu["name"], "input": tu["input"]})
                 try:
                     out = await self.registry.invoke(tu["name"], tu["input"] or {})
+                    visible, manifest = prune_tool_result(
+                        tu["name"],
+                        out,
+                        ctx=current_tool_ctx(),
+                        policy=self.policy.for_tool(tu["name"]),
+                        default_max_bytes=self.policy.default_max_result_bytes,
+                    )
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tu["id"],
-                        "content": _to_tool_result_content(out),
+                        "content": _to_tool_result_content(visible),
                     })
-                    self._emit("tool_result", {"id": tu["id"], "name": tu["name"], "ok": True})
+                    tr_payload: dict[str, Any] = {"id": tu["id"], "name": tu["name"], "ok": True}
+                    if manifest is not None:
+                        tr_payload["manifest"] = manifest
+                    self._emit("tool_result", tr_payload)
                 except Exception as e:
                     err = f"{type(e).__name__}: {e}"
                     tool_results.append({

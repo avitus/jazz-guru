@@ -52,6 +52,7 @@ class ToolPolicy(BaseModel):
     timeout_sec: int | None = None
     mem_mb: int | None = None
     feature_flag: str | None = None
+    max_result_bytes: int | None = None
 
 
 class BudgetTurn(BaseModel):
@@ -73,6 +74,7 @@ class Policy(BaseModel):
     version: int = 1
     default: str = "allow"
     auto_approve: bool = True
+    default_max_result_bytes: int = 10_000
     tools: dict[str, ToolPolicy] = Field(default_factory=dict)
     budgets: Budgets = Field(default_factory=Budgets)
 
