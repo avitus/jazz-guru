@@ -25,6 +25,9 @@ if [[ "$PLATFORM" == "mac" ]]; then
   brew list --versions redis       >/dev/null 2>&1 || brew install redis
   brew list --versions fluid-synth >/dev/null 2>&1 || brew install fluid-synth
   brew list --versions ffmpeg      >/dev/null 2>&1 || brew install ffmpeg
+  # xz provides liblzma; CPython needs it at build time or _lzma is omitted,
+  # which breaks any transitive `import lzma` (librosa→joblib/pooch hit this).
+  brew list --versions xz          >/dev/null 2>&1 || brew install xz
 
   # Detect a running/installed Homebrew Postgres. Reuse it if present, else install @16.
   PG_FORMULA=""
@@ -162,6 +165,33 @@ fi
 bold "Installing project (.venv)"
 .venv/bin/python -m pip install -q -e ".[dev]"
 ok "python deps installed"
+
+# Verify the venv's Python has _lzma. Pyenv-built CPython skips this C
+# extension silently when xz headers were missing at build time; the
+# failure only surfaces later when librosa pulls in joblib/pooch.
+if ! .venv/bin/python -c "import lzma" >/dev/null 2>&1; then
+  PYBIN="$(.venv/bin/python -c 'import sys; print(sys.executable)')"
+  PYBASE="$(.venv/bin/python -c 'import sys; print(sys.base_prefix)')"
+  case "$PLATFORM" in
+    mac)   XZ_INSTALL="brew install xz" ;;
+    linux)
+      if   command -v apt-get >/dev/null 2>&1; then XZ_INSTALL="sudo apt-get install -y xz-utils  # Debian/Ubuntu (package is xz-utils, not xz)"
+      elif command -v dnf     >/dev/null 2>&1; then XZ_INSTALL="sudo dnf install -y xz            # Fedora/RHEL"
+      elif command -v yum     >/dev/null 2>&1; then XZ_INSTALL="sudo yum install -y xz            # older RHEL/CentOS"
+      elif command -v pacman  >/dev/null 2>&1; then XZ_INSTALL="sudo pacman -S --noconfirm xz    # Arch"
+      else XZ_INSTALL="install your distro's xz / liblzma development headers"
+      fi
+      ;;
+    *) XZ_INSTALL="install your platform's xz / liblzma development package" ;;
+  esac
+  die "venv python ($PYBIN, built from $PYBASE) is missing the _lzma stdlib extension.
+   Rebuild the underlying CPython with xz available, then recreate the venv:
+     $XZ_INSTALL
+     pyenv uninstall \$(basename \"$PYBASE\")   # if pyenv-managed
+     pyenv install   \$(basename \"$PYBASE\")
+     rm -rf .venv && make install"
+fi
+ok "_lzma extension present"
 
 # --- .env ---------------------------------------------------------------------
 if [[ ! -f .env ]]; then

@@ -4,9 +4,10 @@ Default engine is FluidSynth (SF2/SF3, General MIDI). Optional engines:
   * ``sfizz``     — SFZ via the ``sfizz_render`` CLI.
   * ``liquidsfz`` — SFZ via ``liquidsfz --no-jack --render``.
 
-A presets registry (``config/instruments.yaml``) maps a preset name to an
-engine + library path + post-processing defaults. The agent edits that file
-directly to add or tune presets; this tool reloads it on every call.
+A presets registry (``data/instruments.yaml``) maps a preset name to an
+engine + library path + post-processing defaults. The agent mutates this
+file via the ``preset_*`` tool family; this renderer reloads it on every
+call (mtime-cached in :mod:`jazz_guru.presets`).
 
 Post-processing (lowpass, vibrato, gain, loudnorm) is applied via ffmpeg as
 a single filter chain. Any ``post_process`` field passed by the caller
@@ -20,7 +21,6 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, Field
 
 from jazz_guru.actions.context import current
@@ -45,9 +45,9 @@ class RenderMidiInput(BaseModel):
     instrument: str | None = Field(
         None,
         description=(
-            "Preset name from config/instruments.yaml. If set, selects the engine "
-            "and library; overrides `engine` and `soundfont`. See `tool_inspect` "
-            "or read config/instruments.yaml for available presets."
+            "Preset name from data/instruments.yaml. If set, selects the engine "
+            "and library; overrides `engine` and `soundfont`. Use `preset_list` "
+            "to enumerate available presets."
         ),
     )
     engine: str | None = Field(
@@ -68,27 +68,24 @@ class RenderMidiInput(BaseModel):
 
 
 # ---------- preset loading -------------------------------------------------
+#
+# These are kept as thin wrappers over jazz_guru.presets so existing call
+# sites and tests that monkeypatch them keep working. New code should call
+# the presets module directly.
 
 
 def _load_presets() -> dict[str, Any]:
-    s = get_settings()
-    p = Path(s.jg_instruments_file)
-    if not p.exists():
-        return {"version": 1, "default": None, "presets": {}}
-    with p.open("r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh) or {}
-    data.setdefault("presets", {})
-    return data
+    # Local import: presets imports from this module (PostProcess), so we
+    # can't do it at module top level.
+    from jazz_guru.presets import load_presets
+
+    return load_presets().model_dump(exclude_none=True, mode="json")
 
 
 def _resolve_library(library: str | None) -> Path | None:
-    if not library:
-        return None
-    p = Path(library).expanduser()
-    if p.is_absolute():
-        return p
-    root = Path(get_settings().jg_instruments_root).expanduser()
-    return (root / p).resolve()
+    from jazz_guru.presets import resolve_library
+
+    return resolve_library(library)
 
 
 # ---------- engines --------------------------------------------------------
@@ -217,8 +214,8 @@ async def _ffmpeg_postprocess(
     "render_midi",
     description=(
         "Render a .mid file to audio. Engines: fluidsynth (SF2/SF3, default), "
-        "sfizz, liquidsfz (both SFZ). Use `instrument` to pick a preset from "
-        "config/instruments.yaml, or pass `engine` + `soundfont` directly. "
+        "sfizz, liquidsfz (both SFZ). Use `instrument` to pick a preset "
+        "(see `preset_list`), or pass `engine` + `soundfont` directly. "
         "`post_process` adds an ffmpeg filter chain (lowpass / vibrato / gain / "
         "loudnorm) for warmth."
     ),
