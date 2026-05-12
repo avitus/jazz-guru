@@ -201,7 +201,7 @@ fi
 
 # --- audio engines + sample libraries -----------------------------------------
 # Install/build the offline renderers and the SFZ libraries referenced by
-# config/instruments.yaml. All steps are idempotent — a second `make setup`
+# data/instruments.yaml. All steps are idempotent — a second `make setup`
 # is a no-op once everything is in place.
 INSTR_ROOT="${JG_INSTRUMENTS_ROOT:-$HOME/.local/share/jazz-guru/instruments}"
 SF_PATH="$INSTR_ROOT/soundfonts/FluidR3Mono_GM.sf3"
@@ -267,7 +267,7 @@ else
   warn "sfizz_render install only automated on macOS; build from source per https://github.com/sfztools/sfizz"
 fi
 
-# 2. SFZ sample libraries — paths must match config/instruments.yaml.
+# 2. SFZ sample libraries — paths must match data/instruments.yaml.
 bold "Cloning SFZ libraries into $INSTR_ROOT (~1.1 GB total; first run only)"
 clone_lib() {
   local repo="$1" dst="$2" size="$3"
