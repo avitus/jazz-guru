@@ -11,10 +11,11 @@ from jazz_guru.actions.tools import todo as todo_mod
 
 @pytest.fixture
 def in_memory_todos(monkeypatch: pytest.MonkeyPatch):
-    """Replace the DB-backed load/save with an in-memory dict.
+    """Replace the DB-backed load/mutate paths with an in-memory dict.
 
-    The todo tool reads through ``_load_todos`` / ``_save_todos``; swap those
-    to make these unit tests independent of Postgres.
+    Mutations now go through ``_mutate_todos`` (which uses
+    ``SELECT ... FOR UPDATE`` to serialize concurrent updates); reads use
+    ``_load_todos``. Tests stub both to stay independent of Postgres.
     """
     store: dict[uuid.UUID, list[dict]] = {}
 
@@ -24,8 +25,17 @@ def in_memory_todos(monkeypatch: pytest.MonkeyPatch):
     async def _save(sid, todos):
         store[sid] = list(todos)
 
+    async def _mutate(sid, mutator):
+        # Simulate the locking single-transaction path: read current, hand
+        # to mutator, write back atomically.
+        current = list(store.get(sid, []))
+        new_todos, extra = mutator(list(current))
+        store[sid] = list(new_todos)
+        return new_todos, extra
+
     monkeypatch.setattr(todo_mod, "_load_todos", _load)
     monkeypatch.setattr(todo_mod, "_save_todos", _save)
+    monkeypatch.setattr(todo_mod, "_mutate_todos", _mutate)
 
     register_all()
     sid = uuid.uuid4()

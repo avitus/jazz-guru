@@ -170,13 +170,21 @@ async def start_background_subprocess(
     stdout_fh = stdout_path.open("wb", buffering=0)
     stderr_fh = stderr_path.open("wb", buffering=0)
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=str(cwd),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=stdout_fh,
-        stderr=stderr_fh,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=str(cwd),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=stdout_fh,
+            stderr=stderr_fh,
+        )
+    except Exception:
+        # If spawn fails the file handles would otherwise leak.
+        with contextlib.suppress(Exception):
+            stdout_fh.close()
+        with contextlib.suppress(Exception):
+            stderr_fh.close()
+        raise
     job.proc = proc
 
     if proc.stdin is not None:
@@ -209,11 +217,13 @@ async def terminate_job(job: BackgroundJob, grace_sec: float = 2.0) -> bool:
     """SIGTERM the job; SIGKILL after ``grace_sec`` if still alive."""
     if job.proc is None or job.proc.returncode is not None:
         return False
-    job.cancelled = True
     try:
         job.proc.terminate()
     except ProcessLookupError:
+        # Process already exited; don't mark the job as cancelled because
+        # the watcher will see the real exit code in a moment.
         return False
+    job.cancelled = True
     try:
         await asyncio.wait_for(job.proc.wait(), timeout=grace_sec)
         return True

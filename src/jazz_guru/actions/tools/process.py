@@ -54,11 +54,13 @@ def _read_stream_for(action: str, job: BackgroundJob, stream: str, offset: int, 
         return {"stdout": read_log_window(job.stdout_path, offset, limit)}
     if stream == "stderr":
         return {"stderr": read_log_window(job.stderr_path, offset, limit)}
-    # both: split the limit in half so we don't burn the budget on stdout alone.
-    half = max(1024, limit // 2)
+    # both: split the byte budget so stdout + stderr together stay within the
+    # caller's `limit`. (The previous floor of 1024 per side could blow past it.)
+    left = max(0, limit // 2)
+    right = max(0, limit - left)
     return {
-        "stdout": read_log_window(job.stdout_path, offset, half),
-        "stderr": read_log_window(job.stderr_path, offset, half),
+        "stdout": read_log_window(job.stdout_path, offset, left),
+        "stderr": read_log_window(job.stderr_path, offset, right),
     }
 
 
@@ -86,6 +88,10 @@ async def process(
     reg = current_jobs()
     if reg is None:
         return {"ok": False, "error": "no background job registry attached"}
+
+    valid_actions = {"list", "poll", "log", "wait", "kill"}
+    if action not in valid_actions:
+        return {"ok": False, "error": f"unknown action: {action!r}"}
 
     if action == "list":
         return {"ok": True, "jobs": [_job_summary(j) for j in reg.list()]}
@@ -125,4 +131,5 @@ async def process(
         killed = await terminate_job(job, grace_sec=grace_sec)
         return {"ok": killed, **_job_summary(job)}
 
+    # Unreachable: valid_actions check above guarantees we matched one branch.
     return {"ok": False, "error": f"unknown action: {action!r}"}

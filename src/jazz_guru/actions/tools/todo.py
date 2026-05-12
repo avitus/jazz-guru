@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 import uuid as uuid_mod
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -75,6 +76,40 @@ async def _save_todos(session_id: uuid_mod.UUID, todos: list[dict[str, Any]]) ->
         row.meta = meta
 
 
+async def _mutate_todos(
+    session_id: uuid_mod.UUID,
+    mutator: Callable[[list[dict[str, Any]]], tuple[list[dict[str, Any]], Any]],
+) -> tuple[list[dict[str, Any]], Any]:
+    """Read-modify-write in ONE transaction with row locking.
+
+    Without ``with_for_update`` two concurrent ``todo add`` calls could each
+    read the same starting list and both write back -- one update is then
+    silently lost. This serializes mutations per session.
+
+    ``mutator`` receives the current todos list (a fresh copy) and returns a
+    ``(new_todos, extra)`` tuple. ``extra`` is opaque to the helper and just
+    bubbled back to the caller (typically the new/affected item the caller
+    wants to return).
+    """
+    async with session_scope() as s:
+        row = (
+            await s.execute(
+                select(SessionRow)
+                .where(SessionRow.id == session_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return [], None
+        meta = dict(row.meta or {})
+        current_list = meta.get("todos", [])
+        todos = [t for t in current_list if isinstance(t, dict)]
+        new_todos, extra = mutator(list(todos))
+        meta["todos"] = new_todos
+        row.meta = meta
+        return new_todos, extra
+
+
 @registry.register(
     "todo",
     description=(
@@ -99,23 +134,26 @@ async def todo(
     except ValueError:
         return {"ok": False, "error": f"invalid session_id: {ctx.session_id!r}"}
 
-    todos = await _load_todos(sid)
-
     if action == "list":
+        todos = await _load_todos(sid)
         return {"ok": True, "todos": todos, "count": len(todos)}
 
     if action == "add":
         if not text or not text.strip():
             return {"ok": False, "error": "add requires non-empty 'text'"}
         item = _new_todo(text.strip())
-        todos.append(item)
-        await _save_todos(sid, todos)
-        return {"ok": True, "added": item, "count": len(todos)}
+
+        def _mut_add(todos: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            todos.append(item)
+            return todos, item
+
+        new_todos, added = await _mutate_todos(sid, _mut_add)
+        return {"ok": True, "added": added, "count": len(new_todos)}
 
     if action == "set":
         if items is None:
             return {"ok": False, "error": "set requires 'items'"}
-        new_todos: list[dict[str, Any]] = []
+        materialized: list[dict[str, Any]] = []
         for it in items:
             if not isinstance(it, dict):
                 continue
@@ -123,27 +161,41 @@ async def todo(
             if not t:
                 continue
             status = str(it.get("status") or "open")
-            new_todos.append(_new_todo(t, status=status))
-        await _save_todos(sid, new_todos)
+            materialized.append(_new_todo(t, status=status))
+
+        def _mut_set(_todos: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], None]:
+            return list(materialized), None
+
+        new_todos, _ = await _mutate_todos(sid, _mut_set)
         return {"ok": True, "todos": new_todos, "count": len(new_todos)}
 
     if action in ("start", "complete", "remove"):
         if not id:
             return {"ok": False, "error": f"{action} requires 'id'"}
-        idx = next((i for i, t in enumerate(todos) if t.get("id") == id), -1)
-        if idx < 0:
+
+        def _mut_id(todos: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+            idx = next((i for i, t in enumerate(todos) if t.get("id") == id), -1)
+            if idx < 0:
+                return todos, None
+            if action == "remove":
+                removed = todos.pop(idx)
+                return todos, removed
+            todos[idx]["status"] = "in_progress" if action == "start" else "done"
+            todos[idx]["updated_at"] = time.time()
+            return todos, todos[idx]
+
+        new_todos, target = await _mutate_todos(sid, _mut_id)
+        if target is None:
             return {"ok": False, "error": f"no such id: {id}"}
         if action == "remove":
-            removed = todos.pop(idx)
-            await _save_todos(sid, todos)
-            return {"ok": True, "removed": removed, "count": len(todos)}
-        todos[idx]["status"] = "in_progress" if action == "start" else "done"
-        todos[idx]["updated_at"] = time.time()
-        await _save_todos(sid, todos)
-        return {"ok": True, "todo": todos[idx]}
+            return {"ok": True, "removed": target, "count": len(new_todos)}
+        return {"ok": True, "todo": target}
 
     if action == "clear":
-        await _save_todos(sid, [])
-        return {"ok": True, "cleared": len(todos)}
+        def _mut_clear(todos: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+            return [], len(todos)
+
+        _, prev_count = await _mutate_todos(sid, _mut_clear)
+        return {"ok": True, "cleared": prev_count}
 
     return {"ok": False, "error": f"unknown action: {action!r}"}

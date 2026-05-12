@@ -61,6 +61,15 @@ def _do_exact(text: str, find: str, replace: str, change_all: bool) -> tuple[str
     return new, count if change_all else 1, "exact"
 
 
+class _AmbiguousMatch(Exception):
+    """A strategy found multiple matches and refuses to guess which one to patch."""
+
+    def __init__(self, strategy: str, count: int) -> None:
+        super().__init__(f"{strategy} matched {count} times")
+        self.strategy = strategy
+        self.count = count
+
+
 def _do_line_trimmed(text: str, find: str, replace: str) -> tuple[str, int, str] | None:
     text_lines = text.splitlines(keepends=True)
     find_lines = find.splitlines()
@@ -76,9 +85,13 @@ def _do_line_trimmed(text: str, find: str, replace: str) -> tuple[str, int, str]
         # Tolerate trailing blank lines that splitlines might have lost.
         if window == target:
             matches.append(start)
-    if len(matches) != 1:
-        # Either zero matches (try next strategy) or multiple (ambiguous → bail).
+    if len(matches) == 0:
         return None
+    if len(matches) > 1:
+        # Multiple matches via line-trimmed: do NOT fall through to fuzzy --
+        # an ambiguous line match is much more reliable than a fuzzy guess
+        # against the wrong block.
+        raise _AmbiguousMatch("line_trimmed", len(matches))
     start = matches[0]
     # Preserve the indentation of the first replaced line on every replacement line.
     indent = _leading_ws(text_lines[start])
@@ -237,7 +250,20 @@ async def _patch_file(
                 "strategy": "exact",
                 "matches": exact_count,
             }
-        line_trim = _do_line_trimmed(text, find, replace)
+        try:
+            line_trim = _do_line_trimmed(text, find, replace)
+        except _AmbiguousMatch as ambig:
+            return {
+                "ok": False,
+                "edited": False,
+                "reason": (
+                    f"find matches {ambig.count} times via {ambig.strategy} "
+                    "strategy; expand find for uniqueness"
+                ),
+                "path": str(p),
+                "strategy": ambig.strategy,
+                "matches": ambig.count,
+            }
         if line_trim is not None:
             new_text, replacements, strategy_used = line_trim
         else:

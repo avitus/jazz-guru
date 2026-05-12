@@ -55,7 +55,14 @@ async def _search_turns(
     role: str | None,
 ) -> list[dict[str, Any]]:
     """Run the SQL search. Factored out so unit tests can monkeypatch it."""
-    pattern = f"%{query}%"
+    # Escape ILIKE wildcards in user input so a literal '%' or '_' in the
+    # query doesn't blow up the match set (or accidentally match everything).
+    escaped = (
+        query.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    pattern = f"%{escaped}%"
     async with session_scope() as s:
         # cast(Turn.content, sa.Text) matches the indexed expression in the
         # 0003 migration, so the GIN index can satisfy this query.
@@ -63,7 +70,7 @@ async def _search_turns(
         stmt = (
             select(Turn, SessionRow.title)
             .join(SessionRow, SessionRow.id == Turn.session_id)
-            .where(content_text.ilike(pattern))
+            .where(content_text.ilike(pattern, escape="\\"))
             .order_by(Turn.started_at.desc())
             .limit(k)
         )
