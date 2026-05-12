@@ -6,6 +6,7 @@ import json
 import mimetypes
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from jazz_guru import auth
+from jazz_guru.actions.mcp import MCPManager
 from jazz_guru.config import get_goal, get_settings
 from jazz_guru.distillation import enqueue_reflexion, run_reflexion
 from jazz_guru.eval import run_all
@@ -64,8 +66,30 @@ def _ws_token_and_subproto(ws: WebSocket) -> tuple[str | None, str | None]:
     return None, None
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Start/stop the MCP manager alongside the FastAPI lifecycle.
+
+    Errors during start are logged but don't abort server startup — a misconfigured
+    MCP server shouldn't prevent the rest of the agent from running.
+    """
+    mgr = MCPManager()
+    app.state.mcp = mgr
+    try:
+        await mgr.start_all()
+    except Exception as e:
+        log.warning("mcp.lifespan_start_failed", err=str(e))
+    try:
+        yield
+    finally:
+        try:
+            await mgr.stop_all()
+        except Exception as e:
+            log.warning("mcp.lifespan_stop_failed", err=str(e))
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="jazz-guru", version="0.1.0")
+    app = FastAPI(title="jazz-guru", version="0.1.0", lifespan=_lifespan)
     sm = SessionManager()
     auth.install(app)
 
@@ -182,6 +206,24 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
     @app.post("/eval/run")
     async def eval_run(only: str | None = None) -> dict[str, object]:
         return await run_all(only=only)
+
+    @app.get("/mcp/status")
+    async def mcp_status() -> dict[str, Any]:
+        mgr: MCPManager | None = getattr(app.state, "mcp", None)
+        if mgr is None:
+            return {"ok": False, "error": "MCP manager not initialized"}
+        return {"ok": True, **mgr.status()}
+
+    @app.post("/mcp/reload")
+    async def mcp_reload() -> dict[str, Any]:
+        mgr: MCPManager | None = getattr(app.state, "mcp", None)
+        if mgr is None:
+            return {"ok": False, "error": "MCP manager not initialized"}
+        try:
+            await mgr.reload()
+        except Exception as e:
+            raise HTTPException(500, f"mcp reload failed: {e}") from e
+        return {"ok": True, **mgr.status()}
 
     @app.post("/memory/search")
     async def memory_search(body: MemorySearchBody) -> dict[str, object]:

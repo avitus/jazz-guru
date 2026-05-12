@@ -199,6 +199,86 @@ def mic_devices() -> None:
     console.print(table)
 
 
+mcp_app = typer.Typer(no_args_is_help=True, help="MCP server management")
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.command("list")
+def mcp_list() -> None:
+    """List configured MCP servers (from config/mcp.yaml)."""
+    from jazz_guru.actions.mcp import load_mcp_config
+
+    cfg = load_mcp_config()
+    if not cfg.servers:
+        console.print(
+            "[yellow]no MCP servers configured[/yellow] "
+            "(add a 'mcp_servers:' block to config/mcp.yaml)"
+        )
+        return
+    table = Table(title="mcp servers (configured)")
+    table.add_column("name")
+    table.add_column("transport")
+    table.add_column("enabled")
+    table.add_column("endpoint")
+    table.add_column("filters")
+    for s in cfg.servers:
+        endpoint = s.command if s.is_stdio() else s.url
+        inc = ",".join(s.include_tools) if s.include_tools else "(all)"
+        exc = ",".join(s.exclude_tools) if s.exclude_tools else "-"
+        table.add_row(
+            s.name, s.transport, str(s.enabled), str(endpoint), f"include={inc}; exclude={exc}"
+        )
+    console.print(table)
+
+
+@mcp_app.command("status")
+def mcp_status(
+    server: str = typer.Option(
+        "http://127.0.0.1:8000", "--server", help="jazz-guru-server base URL"
+    ),
+    api_key: str = typer.Option(None, "--api-key", help="X-API-Key value if JG_API_KEY is set"),
+) -> None:
+    """Query the running server's MCP manager state."""
+    import httpx
+
+    headers = {"X-API-Key": api_key} if api_key else {}
+    try:
+        r = httpx.get(f"{server.rstrip('/')}/mcp/status", headers=headers, timeout=5.0)
+        r.raise_for_status()
+        payload = r.json()
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]{server} returned {e.response.status_code}: {e.response.text[:200]}[/red]")
+        raise typer.Exit(code=1) from e
+    except (httpx.HTTPError, ValueError) as e:
+        console.print(f"[red]could not reach {server}: {e}[/red]")
+        raise typer.Exit(code=1) from e
+    console.print(Panel.fit(json.dumps(payload, indent=2), title="mcp status"))
+
+
+@mcp_app.command("reload")
+def mcp_reload(
+    server: str = typer.Option(
+        "http://127.0.0.1:8000", "--server", help="jazz-guru-server base URL"
+    ),
+    api_key: str = typer.Option(None, "--api-key", help="X-API-Key value if JG_API_KEY is set"),
+) -> None:
+    """Reload config/mcp.yaml on the running server."""
+    import httpx
+
+    headers = {"X-API-Key": api_key} if api_key else {}
+    try:
+        r = httpx.post(f"{server.rstrip('/')}/mcp/reload", headers=headers, timeout=30.0)
+        r.raise_for_status()
+        payload = r.json()
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]{server} returned {e.response.status_code}: {e.response.text[:200]}[/red]")
+        raise typer.Exit(code=1) from e
+    except (httpx.HTTPError, ValueError) as e:
+        console.print(f"[red]could not reach {server}: {e}[/red]")
+        raise typer.Exit(code=1) from e
+    console.print(Panel.fit(json.dumps(payload, indent=2), title="mcp reload"))
+
+
 def main() -> None:
     app()
 
