@@ -161,6 +161,7 @@ def register_all() -> ToolRegistry:
         audio_analyze,
         clarify,
         code_gen,
+        delegate,
         fs,
         http,
         midi,
