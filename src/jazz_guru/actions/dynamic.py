@@ -11,6 +11,7 @@ Loads agent-authored Python source as a callable tool. Two execution strategies:
 
 Each generated tool exposes a ``run(**kwargs) -> dict | str`` (or async).
 """
+
 from __future__ import annotations
 
 import ast
@@ -86,9 +87,7 @@ class DynamicSpec:
 
 def validate_name(name: str) -> str:
     if not VALID_NAME.match(name):
-        raise ToolValidationError(
-            f"invalid tool name '{name}': must match {VALID_NAME.pattern}"
-        )
+        raise ToolValidationError(f"invalid tool name '{name}': must match {VALID_NAME.pattern}")
     if name in RESERVED:
         raise ToolValidationError(f"name '{name}' is reserved")
     return name
@@ -96,12 +95,22 @@ def validate_name(name: str) -> str:
 
 def validate_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     if schema is None:
-        return normalize_input_schema(None)
+        try:
+            return normalize_input_schema(None)
+        except ToolValidationError:
+            raise
+        except Exception as err:
+            raise ToolValidationError(f"invalid input_schema: {err}") from err
     if not isinstance(schema, dict):
         raise ToolValidationError("input_schema must be an object")
     if schema.get("type", "object") != "object":
         raise ToolValidationError("top-level input_schema.type must be 'object'")
-    return normalize_input_schema(schema)
+    try:
+        return normalize_input_schema(schema)
+    except ToolValidationError:
+        raise
+    except Exception as err:
+        raise ToolValidationError(f"invalid input_schema: {err}") from err
 
 
 def validate_source(source: str) -> None:
@@ -165,7 +174,7 @@ def _runner_template() -> str:
     # source can contain arbitrary ``{...}`` literals (dict literals,
     # f-strings, etc.) without breaking interpolation.
     return textwrap.dedent(
-        f'''
+        f"""
         import json, sys, traceback, asyncio, inspect
 
         # ---- begin user source -------------------------------------------
@@ -194,7 +203,7 @@ def _runner_template() -> str:
                 print(json.dumps({{"value": str(result)}}), flush=True)
 
         _main()
-        '''
+        """
     ).strip()
 
 
@@ -224,7 +233,11 @@ async def _run_subprocess(spec: DynamicSpec, kwargs: dict[str, Any]) -> Any:
     err_s = err.decode("utf-8", errors="replace")
     if proc.returncode != 0:
         try:
-            return json.loads(out_s.splitlines()[-1]) if out_s else {"__error__": err_s or "non-zero exit"}
+            return (
+                json.loads(out_s.splitlines()[-1])
+                if out_s
+                else {"__error__": err_s or "non-zero exit"}
+            )
         except Exception:
             return {"__error__": err_s or out_s}
     if not out_s:

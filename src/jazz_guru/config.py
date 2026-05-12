@@ -92,10 +92,15 @@ class Policy(BaseModel):
     budgets: Budgets = Field(default_factory=Budgets)
 
     def toolset_for_tool(self, name: str) -> ToolsetSpec | None:
-        for ts in self.toolsets.values():
-            if name in ts.tools:
-                return ts
-        return None
+        matches = [(ts_name, ts) for ts_name, ts in self.toolsets.items() if name in ts.tools]
+        if len(matches) > 1:
+            ids = sorted(m[0] for m in matches)
+            raise ValueError(
+                f"tool '{name}' belongs to multiple toolsets {ids}; policy "
+                "resolution would be YAML-order dependent. Move the tool into "
+                "exactly one toolset, or split it out into its own per-tool entry."
+            )
+        return matches[0][1] if matches else None
 
     def for_tool(self, name: str) -> ToolPolicy:
         if name in self.tools:

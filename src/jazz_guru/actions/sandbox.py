@@ -26,10 +26,14 @@ def safe_roots(session_id: str | None = None) -> list[Path]:
     Order matters only for diagnostics; membership is set-like. Includes:
       * the session workspace (the one place writes are allowed too),
       * ``data/`` (curated project data — presets, sandbox profiles, etc.),
+      * ``JG_INSTRUMENTS_ROOT`` (per-machine SFZ/SF2 library tree),
       * any extra absolute paths in ``JG_SAFE_EXTRA_PATHS``.
     """
     s = get_settings()
     roots = [session_workspace(session_id), data_dir()]
+    instr = Path(s.jg_instruments_root).expanduser()
+    if instr.exists():
+        roots.append(instr.resolve())
     for p in s.jg_safe_extra_paths:
         rp = Path(p).expanduser().resolve()
         if rp.exists():
@@ -46,9 +50,7 @@ def resolve_in_workspace(path: str | Path, session_id: str | None = None) -> Pat
     try:
         candidate.relative_to(base_resolved)
     except ValueError as e:
-        raise PermissionError(
-            f"path {candidate} escapes workspace {base_resolved}"
-        ) from e
+        raise PermissionError(f"path {candidate} escapes workspace {base_resolved}") from e
     return candidate
 
 
@@ -70,7 +72,4 @@ def resolve_in_safe(path: str | Path, session_id: str | None = None) -> Path:
             return candidate
         except ValueError:
             continue
-    raise PermissionError(
-        f"path {candidate} is not under any safe root: "
-        f"{[str(r) for r in roots]}"
-    )
+    raise PermissionError(f"path {candidate} is not under any safe root: {[str(r) for r in roots]}")

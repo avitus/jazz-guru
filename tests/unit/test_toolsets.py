@@ -57,6 +57,23 @@ def test_toolset_for_tool_lookup() -> None:
     assert p.toolset_for_tool("nope") is None
 
 
+def test_toolset_for_tool_rejects_duplicate_membership() -> None:
+    """A tool listed in two toolsets has YAML-order-dependent policy — flag it."""
+    import pytest
+
+    p = Policy(
+        toolsets={
+            "music": ToolsetSpec(tools=["render_midi"]),
+            "audio": ToolsetSpec(tools=["render_midi", "tts"]),
+        },
+    )
+    with pytest.raises(ValueError, match="multiple toolsets"):
+        p.toolset_for_tool("render_midi")
+    # Unambiguous lookups must still work even when one tool is duplicated.
+    assert p.toolset_for_tool("tts") is not None
+    assert p.toolset_for_tool("nope") is None
+
+
 def test_real_policy_yaml_groups_preset_tools() -> None:
     from jazz_guru.config import get_policy
 

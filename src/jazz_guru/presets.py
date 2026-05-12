@@ -7,10 +7,13 @@ never mutated via ``fs_write``/``shell``/``python_exec``.
 Cache invalidates automatically when the file mtime changes; tests and
 ``clear_config_caches`` can force a reload via ``clear_presets_cache``.
 """
+
 from __future__ import annotations
 
+import fcntl
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -65,8 +68,14 @@ def load_presets() -> PresetsFile:
     return file
 
 
-def save_presets(file: PresetsFile) -> None:
-    """Atomic write: tmp file in the same dir, then rename. Invalidates cache."""
+def _lock_path() -> Path:
+    """Sidecar lockfile next to the presets YAML (avoids touching the YAML itself)."""
+    p = _path()
+    return p.with_suffix(p.suffix + ".lock")
+
+
+def _save_unlocked(file: PresetsFile) -> None:
+    """Atomic tmp-then-rename write. Caller is responsible for the flock."""
     target = _path()
     target.parent.mkdir(parents=True, exist_ok=True)
     serialized = yaml.safe_dump(
@@ -84,7 +93,53 @@ def save_presets(file: PresetsFile) -> None:
     except Exception:
         Path(tmp_path).unlink(missing_ok=True)
         raise
-    clear_presets_cache()
+
+
+def save_presets(file: PresetsFile) -> None:
+    """Atomic write under an exclusive flock; cache invalidated in ``finally``.
+
+    For read-modify-write flows (preset_upsert, preset_delete), use
+    :func:`update_presets` instead of pairing this with :func:`load_presets` —
+    the two-call pattern is last-writer-wins under concurrency.
+    """
+    target = _path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(str(_lock_path()), os.O_WRONLY | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        _save_unlocked(file)
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+        clear_presets_cache()
+
+
+def update_presets(mutator: Callable[[PresetsFile], None]) -> PresetsFile:
+    """Atomic load → mutate → save under a single exclusive flock.
+
+    Use this for any read-modify-write of the presets file so two concurrent
+    agents don't clobber each other's edits. The lock is held continuously:
+    we read the latest disk state under the lock, apply the mutator, and
+    write — all before any other writer can interleave.
+    """
+    target = _path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(str(_lock_path()), os.O_WRONLY | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        clear_presets_cache()
+        file = load_presets()
+        mutator(file)
+        _save_unlocked(file)
+        return file
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+        clear_presets_cache()
 
 
 def resolve_library(library: str | None) -> Path | None:
@@ -118,9 +173,7 @@ def validate_preset(name: str, preset: Preset, *, require_library: bool = True) 
         if preset.library is None:
             return
     elif preset.library is None:
-        raise PresetValidationError(
-            f"engine '{preset.engine}' requires a `library` path"
-        )
+        raise PresetValidationError(f"engine '{preset.engine}' requires a `library` path")
     if not require_library:
         return
     lib = resolve_library(preset.library)

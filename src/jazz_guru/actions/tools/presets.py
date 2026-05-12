@@ -5,22 +5,35 @@ agent should *not* reach for ``fs_write`` / ``shell`` / ``python_exec`` to
 touch the file directly — those bypass validation and atomic-write
 semantics.
 """
+
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from jazz_guru.actions import context as actions_context
+from jazz_guru.actions import sandbox
 from jazz_guru.actions.registry import registry
 from jazz_guru.actions.tools.render import PostProcess
+from jazz_guru.config import get_settings
 from jazz_guru.presets import (
     Engine,
     Preset,
+    PresetsFile,
     PresetValidationError,
     load_presets,
-    save_presets,
+    update_presets,
     validate_preset,
 )
+
+
+class _AbortMutation(Exception):
+    """Internal signal from a mutator to skip the save and surface a dict to the caller."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
 
 
 class _Empty(BaseModel):
@@ -123,6 +136,21 @@ async def preset_upsert(
         post_model: PostProcess | None = PostProcess.model_validate(post)
     else:
         post_model = post
+
+    # User-supplied paths must be inside an allowed safe-root before we even
+    # touch the disk for validation. Relative library paths resolve against
+    # JG_INSTRUMENTS_ROOT (same convention as the yaml file), so expand to an
+    # absolute path first, then gate it through resolve_in_safe.
+    if library is not None:
+        sid = actions_context.current().session_id
+        lib_to_check = Path(library).expanduser()
+        if not lib_to_check.is_absolute():
+            lib_to_check = Path(get_settings().jg_instruments_root) / lib_to_check
+        try:
+            sandbox.resolve_in_safe(lib_to_check, sid)
+        except PermissionError as e:
+            return {"error": f"library path rejected: {e}"}
+
     try:
         preset = Preset(
             engine=engine,  # type: ignore[arg-type]
@@ -136,15 +164,19 @@ async def preset_upsert(
         validate_preset(name, preset, require_library=require_library_exists)
     except PresetValidationError as e:
         return {"error": str(e)}
-    f = load_presets()
-    existed = name in f.presets
-    f.presets[name] = preset
-    if set_default or f.default is None:
-        f.default = name
-    save_presets(f)
+
+    existed_holder = {"value": False}
+
+    def _mutate(f: PresetsFile) -> None:
+        existed_holder["value"] = name in f.presets
+        f.presets[name] = preset
+        if set_default or f.default is None:
+            f.default = name
+
+    f = update_presets(_mutate)
     return {
         "name": name,
-        "status": "updated" if existed else "created",
+        "status": "updated" if existed_holder["value"] else "created",
         "default": f.default,
     }
 
@@ -159,14 +191,37 @@ async def preset_upsert(
     tags=("music", "presets"),
 )
 async def preset_delete(name: str) -> dict[str, Any]:
-    f = load_presets()
-    if name not in f.presets:
-        return {"error": f"unknown preset '{name}'", "available": sorted(f.presets.keys())}
-    if f.default == name:
+    # Pre-flight check against the cached read; lets us return a clear error
+    # without acquiring the lock when the preset clearly isn't there.
+    pre = load_presets()
+    if name not in pre.presets:
+        return {"error": f"unknown preset '{name}'", "available": sorted(pre.presets.keys())}
+    if pre.default == name:
         return {
             "error": f"cannot delete '{name}' while it is the default; set another default first",
-            "default": f.default,
+            "default": pre.default,
         }
-    del f.presets[name]
-    save_presets(f)
+
+    def _mutate(f: PresetsFile) -> None:
+        # Re-check under the lock: another writer may have removed it, or made
+        # it the default, between our pre-flight and now.
+        if name not in f.presets:
+            raise _AbortMutation(
+                {"error": f"unknown preset '{name}'", "available": sorted(f.presets.keys())}
+            )
+        if f.default == name:
+            raise _AbortMutation(
+                {
+                    "error": (
+                        f"cannot delete '{name}' while it is the default; set another default first"
+                    ),
+                    "default": f.default,
+                }
+            )
+        del f.presets[name]
+
+    try:
+        update_presets(_mutate)
+    except _AbortMutation as abort:
+        return abort.payload
     return {"name": name, "status": "removed"}
