@@ -11,6 +11,8 @@ tools:
   http_post:      { mode: allow }
   python_exec:    { mode: allow, timeout_sec: 30, mem_mb: 512 }
   code_gen:       { mode: allow, scope: workspace }
+  code_edit:      { mode: allow, scope: workspace }
+  patch:          { mode: allow, scope: workspace }
   web_search:     { mode: allow }
   vision:         { mode: allow }
   audio_analyze:  { mode: allow }
@@ -31,6 +33,12 @@ tools:
   notes_read:            { mode: allow }
   notes_write:           { mode: allow }
   notes_patch:           { mode: allow }
+
+  # --- productivity tools -------------------------------------------------
+  process:               { mode: allow }
+  todo:                  { mode: allow }
+  clarify:               { mode: allow }
+  session_search:        { mode: allow }
 
 budgets:
   per_turn:
