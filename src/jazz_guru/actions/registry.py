@@ -172,6 +172,7 @@ def register_all() -> ToolRegistry:
         render,
         session_search,
         shell,
+        skills,
         todo,
         tool_meta,
         tts,

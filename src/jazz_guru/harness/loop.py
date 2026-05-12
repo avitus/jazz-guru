@@ -159,12 +159,23 @@ class AgentLoop:
         playbook = await self._load_playbook()
         state_doc = self._state_doc()
 
+        # Compute the current allowed tool set so skills can be filtered by
+        # their requires_tools / fallback_when_tools clauses. We do this
+        # BEFORE attaching the dynamic registry below; the controller will
+        # recompute fresh per round, this is just for the prompt's metadata
+        # block (a small skill list mismatched by one round is harmless).
+        try:
+            allowed_tools = self.controller._allowed_set()  # type: ignore[attr-defined]
+        except Exception:
+            allowed_tools = None
+
         prompt = self.builder.build(BuildInputs(
             user_message=user_input,
             history=self.session.history,
             state_doc=state_doc.render_markdown(),
             retrieved_memory=retrieved,
             playbook_excerpts=playbook,
+            allowed_tools=allowed_tools,
         ))
 
         await self._hydrate_dynamic_registry()
