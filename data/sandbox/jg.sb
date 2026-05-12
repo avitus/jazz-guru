@@ -1,0 +1,77 @@
+;; jazz-guru macOS sandbox profile for shell / python_exec / dynamic-tool
+;; subprocesses. Activated when JG_OS_SANDBOX=1.
+;;
+;; The harness invokes:
+;;   sandbox-exec -f data/sandbox/jg.sb \
+;;     -D WORKSPACE=/abs/path/workspace/sessions/<sid> \
+;;     -D DATA=/abs/path/data \
+;;     <argv...>
+;;
+;; Design:
+;;   * deny by default
+;;   * allow process startup (dyld + exec)
+;;   * allow read on common dirs the toolchain needs (brew, system libs,
+;;     the Python install)
+;;   * allow read on the workspace + data dir (curated project data)
+;;   * allow WRITE only on the session workspace and /private/tmp
+;;   * allow network (so http / pip / voyage / anthropic still work)
+;;
+;; Test from the command line:
+;;   sandbox-exec -f data/sandbox/jg.sb \
+;;     -D WORKSPACE=$PWD/workspace -D DATA=$PWD/data \
+;;     python3 -c "open('/etc/hosts').read()"   # should fail
+;;   sandbox-exec -f data/sandbox/jg.sb \
+;;     -D WORKSPACE=$PWD/workspace -D DATA=$PWD/data \
+;;     python3 -c "open('$PWD/data/instruments.yaml').read()"  # should succeed
+
+(version 1)
+(deny default)
+
+;; --- process startup ------------------------------------------------------
+(allow process-fork)
+(allow process-exec)
+(allow signal (target self))
+(allow sysctl-read)
+(allow mach-lookup)
+(allow ipc-posix-shm)
+
+;; --- read: system libraries and dyld --------------------------------------
+(allow file-read*
+  (subpath "/usr/lib")
+  (subpath "/usr/share")
+  (subpath "/System/Library")
+  (subpath "/Library/Frameworks")
+  (subpath "/Library/Apple")
+  (literal "/etc/localtime")
+  (literal "/private/etc/localtime")
+  (subpath "/private/var/db/dyld")
+  (subpath "/private/var/db/timezone"))
+
+;; --- read: Homebrew (so brewed binaries + libs are visible) ---------------
+(allow file-read*
+  (subpath "/opt/homebrew")
+  (subpath "/usr/local"))
+
+;; --- read: the running Python install (site-packages, stdlib) -------------
+;; Broad — covers pyenv, system Python, brew Python without enumerating each.
+(allow file-read*
+  (regex #"^/Users/[^/]+/\.pyenv/versions/.*")
+  (regex #"^/Users/[^/]+/Projects/.*\.venv/.*"))
+
+;; --- workspace (session): read + write ------------------------------------
+(allow file-read* (subpath (param "WORKSPACE")))
+(allow file-write* (subpath (param "WORKSPACE")))
+
+;; --- data dir (project-curated data): read only --------------------------
+(allow file-read* (subpath (param "DATA")))
+
+;; --- tmp: needed by python's tempfile, pip, etc. --------------------------
+(allow file-read* (subpath "/private/tmp") (subpath "/private/var/folders"))
+(allow file-write* (subpath "/private/tmp") (subpath "/private/var/folders"))
+(allow file-write-create
+  (literal "/dev/null") (literal "/dev/dtracehelper"))
+(allow file-read* file-write-data
+  (literal "/dev/null") (literal "/dev/tty") (literal "/dev/random") (literal "/dev/urandom"))
+
+;; --- network: keep open so http / pip / model calls still work ------------
+(allow network*)

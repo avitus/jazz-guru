@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from jazz_guru.actions.context import current
 from jazz_guru.actions.registry import registry
 from jazz_guru.actions.sandbox import session_workspace
+from jazz_guru.actions.sandbox_profile import wrap_subprocess
 from jazz_guru.config import get_policy
 
 
@@ -29,11 +30,9 @@ async def python_exec(code: str, timeout_sec: int | None = None, stdin: str | No
     timeout = timeout_sec or policy.timeout_sec or 30
     cwd = session_workspace(current().session_id)
     src = textwrap.dedent(code)
+    argv = wrap_subprocess([sys.executable, "-I", "-c", src], cwd)
     proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-I",
-        "-c",
-        src,
+        *argv,
         cwd=str(cwd),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
