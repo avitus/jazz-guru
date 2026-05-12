@@ -267,20 +267,40 @@ else
   warn "sfizz_render install only automated on macOS; build from source per https://github.com/sfztools/sfizz"
 fi
 
-# 2. SFZ sample libraries — paths must match data/instruments.yaml.
+# 2. SFZ sample libraries — paths must match data/instruments.yaml. Each call
+# pins to a specific upstream SHA and verifies the expected .sfz files exist
+# post-clone, so an upstream rename fails setup loudly instead of breaking
+# render_midi later. Bump the SHA in lockstep with any path change in
+# data/instruments.yaml.
 bold "Cloning SFZ libraries into $INSTR_ROOT (~1.1 GB total; first run only)"
 clone_lib() {
-  local repo="$1" dst="$2" size="$3"
-  if [[ -d "$INSTR_ROOT/$dst/.git" ]]; then
+  local repo="$1" dst="$2" size="$3" ref="$4"
+  shift 4
+  local target="$INSTR_ROOT/$dst"
+  if [[ -d "$target/.git" ]]; then
     ok "$dst already present"
   else
-    warn "cloning $repo (~$size) -> $dst"
-    git clone --depth 1 "https://github.com/sfzinstruments/$repo.git" "$INSTR_ROOT/$dst"
+    warn "cloning $repo @ ${ref:0:7} (~$size) -> $dst"
+    mkdir -p "$target"
+    git -C "$target" init -q
+    git -C "$target" remote add origin "https://github.com/sfzinstruments/$repo.git"
+    git -C "$target" fetch --depth 1 -q origin "$ref"
+    git -C "$target" checkout -q FETCH_HEAD
   fi
+  local rel
+  for rel in "$@"; do
+    [[ -f "$target/$rel" ]] || die "expected library file missing after clone of $repo: $dst/$rel"
+  done
 }
-clone_lib MTG.SoloSax         mtg-solo-sax 220MB
-clone_lib SalamanderGrandPiano salamander   1.4GB
-clone_lib dsmolken.double-bass smolken-bass 533MB
+clone_lib MTG.SoloSax         mtg-solo-sax 220MB b494d256549b3d088fdec176ce82867f8a1f58b2 \
+  "MTG Solo Saxophones/MTG Tenor Sax.sfz" \
+  "MTG Solo Saxophones/MTG Alto Sax.sfz" \
+  "MTG Solo Saxophones/MTG Soprano Sax.sfz" \
+  "MTG Solo Saxophones/MTG Baritone Sax.sfz"
+clone_lib SalamanderGrandPiano salamander  1.4GB  3382bf9496bba2486f5ab0de55a264d1dfc38404 \
+  "Salamander Grand Piano V3.sfz"
+clone_lib dsmolken.double-bass smolken-bass 533MB c2985eb647109d2a8f30a70071e3e163339d7396 \
+  "d_smolken_rubner_bass_pizz.sfz"
 
 # 3. FluidR3 GM soundfont — MuseScore's mirror is the most reliable host.
 if [[ -f "$SF_PATH" ]]; then
@@ -293,15 +313,20 @@ else
   ok "soundfont installed at $SF_PATH"
 fi
 
-# 4. Wire FLUIDSYNTH_SOUNDFONT + JG_INSTRUMENTS_ROOT in .env if they are blank.
-# Pydantic-settings treats a `FOO=` env line as the literal empty string, which
-# overrides the Python default — so blank values cause real bugs (e.g.
-# `_resolve_library` falls through to CWD). Always emit the concrete path.
+# 4. Wire FLUIDSYNTH_SOUNDFONT + JG_INSTRUMENTS_ROOT in .env so runtime points
+# at what we just provisioned. Replace any existing value (even non-blank —
+# otherwise setup downloads to one path but runtime reads another), and append
+# the key if .env is missing it entirely. Pydantic-settings treats a `FOO=`
+# line as the literal empty string and overrides the Python default, so we
+# always emit a concrete path.
 awk -v sf="$SF_PATH" -v root="$INSTR_ROOT" '
-  BEGIN{FS=OFS="="}
-  /^FLUIDSYNTH_SOUNDFONT=$/{print "FLUIDSYNTH_SOUNDFONT="sf; next}
-  /^JG_INSTRUMENTS_ROOT=$/{print "JG_INSTRUMENTS_ROOT="root; next}
+  /^FLUIDSYNTH_SOUNDFONT=/ {print "FLUIDSYNTH_SOUNDFONT="sf; seen_sf=1; next}
+  /^JG_INSTRUMENTS_ROOT=/  {print "JG_INSTRUMENTS_ROOT="root; seen_root=1; next}
   {print}
+  END {
+    if (!seen_sf)   print "FLUIDSYNTH_SOUNDFONT="sf
+    if (!seen_root) print "JG_INSTRUMENTS_ROOT="root
+  }
 ' .env > .env.tmp && mv .env.tmp .env
 ok ".env wired (FLUIDSYNTH_SOUNDFONT, JG_INSTRUMENTS_ROOT)"
 
