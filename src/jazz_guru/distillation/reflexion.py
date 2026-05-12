@@ -219,7 +219,10 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
     # the reflexion (memory + playbook are already persisted above).
     for np in result.notes_patches:
         file = np.get("file")
-        op = (np.get("op") or "").lower() or ("patch" if "find" in np else "write")
+        raw_op = np.get("op")
+        op = (str(raw_op).lower() if raw_op is not None else "") or (
+            "patch" if "find" in np else "write"
+        )
         if not file:
             continue
         try:

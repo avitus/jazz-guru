@@ -82,7 +82,10 @@ def write_notes(file: str, content: str) -> dict[str, object]:
         raise NotesError(
             f"content for {key} is {len(normalized)} chars, exceeds cap {cap}"
         )
-    path.write_text(normalized, encoding="utf-8")
+    try:
+        path.write_text(normalized, encoding="utf-8")
+    except OSError as e:
+        raise NotesError(f"failed writing {key}: {e}") from e
     return {"file": key, "path": str(path), "bytes": len(normalized), "cap": cap}
 
 
@@ -94,7 +97,10 @@ def patch_notes(file: str, find: str, replace: str) -> dict[str, object]:
     path, cap = _file_and_cap(key)
     if not path.exists():
         raise NotesError(f"file {key} does not exist yet; use notes_write first")
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise NotesError(f"failed reading {key}: {e}") from e
     count = text.count(find)
     if count == 0:
         raise NotesError(f"find string not present in {key}")
@@ -107,7 +113,10 @@ def patch_notes(file: str, find: str, replace: str) -> dict[str, object]:
         raise NotesError(
             f"patch would grow {key} to {len(new_text)} chars, exceeds cap {cap}"
         )
-    path.write_text(new_text, encoding="utf-8")
+    try:
+        path.write_text(new_text, encoding="utf-8")
+    except OSError as e:
+        raise NotesError(f"failed writing {key}: {e}") from e
     return {
         "file": key,
         "path": str(path),
@@ -127,7 +136,7 @@ def render_notes_block(notes: dict[str, str] | None = None) -> str:
     if notes is None:
         try:
             notes = read_notes()
-        except Exception:
+        except OSError:
             return ""
     agent = (notes.get("AGENT_NOTES") or "").strip()
     user = (notes.get("USER") or "").strip()
