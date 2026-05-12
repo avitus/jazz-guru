@@ -148,6 +148,10 @@ class ToolRPCServer:
         self.sock_path: Path | None = None
         self._tmpdir: Path | None = None
         self._server: asyncio.AbstractServer | None = None
+        # Track in-flight ``registry.invoke`` tasks so ``stop()`` can cancel
+        # them: closing the Unix server only stops new accepts, not handlers
+        # already running inside ``await registry.invoke(...)``.
+        self._inflight: set[asyncio.Task[Any]] = set()
         self.call_count = 0
         self.errors: list[str] = []
 
@@ -164,6 +168,15 @@ class ToolRPCServer:
         return str(self.sock_path), self.token
 
     async def stop(self) -> None:
+        # Cancel any registry.invoke tasks still running so a timed-out
+        # python_exec can't finish a side-effecting tool call after we've
+        # returned. Then drain via gather(return_exceptions=True) so a
+        # raising task doesn't propagate out of stop().
+        if self._inflight:
+            for task in list(self._inflight):
+                task.cancel()
+            await asyncio.gather(*self._inflight, return_exceptions=True)
+            self._inflight.clear()
         if self._server is not None:
             self._server.close()
             with contextlib.suppress(Exception):
@@ -212,14 +225,19 @@ class ToolRPCServer:
             except Exception:
                 pass
 
-    async def _dispatch(self, req: dict[str, Any]) -> dict[str, Any]:
-        rid = req.get("id")
+    async def _dispatch(self, req: Any) -> dict[str, Any]:
+        # Validate the top-level shape BEFORE dereferencing fields so a
+        # malformed request (e.g. `[]`) produces a structured error instead
+        # of an AttributeError that closes the socket.
         if not isinstance(req, dict):
-            return {"id": rid, "error": "invalid request"}
+            return {"id": None, "error": "invalid request"}
+        rid = req.get("id")
         if req.get("token") != self.token:
             return {"id": rid, "error": "auth: bad token"}
         method = req.get("method")
         params = req.get("params") or {}
+        if not isinstance(params, dict):
+            return {"id": rid, "error": "invalid params"}
 
         if method == "list_tools":
             return {"id": rid, "result": sorted(self.allowed)}
@@ -227,6 +245,8 @@ class ToolRPCServer:
         if method == "call":
             name = params.get("name")
             args = params.get("args") or {}
+            if not isinstance(args, dict):
+                return {"id": rid, "error": "call: 'args' must be an object"}
             if not isinstance(name, str):
                 return {"id": rid, "error": "call: 'name' is required"}
             if name not in self.allowed:
@@ -237,8 +257,19 @@ class ToolRPCServer:
                 return {"id": rid, "error": f"rpc call cap {self.call_cap} exceeded"}
             self.call_count += 1
             self._emit("rpc_call", {"name": name, "args": args, "n": self.call_count})
+            invoke_task: asyncio.Task[Any] = asyncio.create_task(
+                self.registry.invoke(name, args)
+            )
+            self._inflight.add(invoke_task)
             try:
-                result = await self.registry.invoke(name, args if isinstance(args, dict) else {})
+                result = await invoke_task
+            except asyncio.CancelledError:
+                err = "rpc call cancelled (server stopping)"
+                self.errors.append(err)
+                self._emit(
+                    "rpc_result", {"name": name, "ok": False, "error": err, "n": self.call_count}
+                )
+                return {"id": rid, "error": err}
             except Exception as e:
                 err = f"{type(e).__name__}: {e}"
                 self.errors.append(err)
@@ -246,6 +277,8 @@ class ToolRPCServer:
                     "rpc_result", {"name": name, "ok": False, "error": err, "n": self.call_count}
                 )
                 return {"id": rid, "error": err}
+            finally:
+                self._inflight.discard(invoke_task)
             self._emit("rpc_result", {"name": name, "ok": True, "n": self.call_count})
             return {"id": rid, "result": result}
 

@@ -88,7 +88,10 @@ async def test_delegate_task_surfaces_runner_failure(
     finally:
         reset_tool_context(tok)
     assert out["ok"] is False
-    assert "subagent crashed" in out["error"]
+    # The handler now returns a generic message and logs the exception
+    # detail server-side via log.exception (CR PR #10 feedback). The
+    # specific RuntimeError text is in stderr/log, not the response.
+    assert "delegate_task failed" in out["error"]
 
 
 async def test_delegate_task_real_runner_signature() -> None:

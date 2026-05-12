@@ -11,7 +11,7 @@ calls in one step. Multi-turn subsessions are a future extension.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -41,11 +41,12 @@ class DelegateTaskInput(BaseModel):
             "Use this to give the subagent the slice of context it needs."
         ),
     )
-    max_turns: int = Field(
+    # Only 1 is supported today; constrain at the schema layer so an
+    # invalid value fails Pydantic validation rather than being silently
+    # ignored at runtime.
+    max_turns: Literal[1] = Field(
         default=1,
-        ge=1,
-        le=4,
-        description="Currently only 1 is supported; reserved for future multi-turn.",
+        description="Currently only 1 is supported; multi-turn delegation is a future extension.",
     )
 
 
@@ -115,15 +116,20 @@ async def delegate_task(
 ) -> dict[str, Any]:
     parent_ctx = current()
     if max_turns != 1:
-        log.info("delegate.multi_turn_not_supported_yet", requested=max_turns)
+        # Schema-level Literal[1] already rejects this; defense in depth.
+        return {
+            "ok": False,
+            "error": "max_turns > 1 is not supported yet; use max_turns=1",
+        }
     try:
         out = await _runner(
             task,
             goal_profile=goal_profile,
             extra_instructions=extra_instructions,
         )
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    except Exception:
+        log.exception("delegate.runner_failed")
+        return {"ok": False, "error": "delegate_task failed"}
     return {
         "ok": True,
         "parent_session_id": parent_ctx.session_id,

@@ -16,8 +16,8 @@ from jazz_guru.config import get_settings
 # ---------- prelude / build helpers -----------------------------------------
 
 
-def test_build_rpc_prelude_includes_proxy_and_user_code() -> None:
-    prelude = build_rpc_prelude("/tmp/sock", "token", "x = 1\n")
+def test_build_rpc_prelude_includes_proxy_and_user_code(tmp_path: Path) -> None:
+    prelude = build_rpc_prelude(str(tmp_path / "sock"), "token", "x = 1\n")
     assert "_JGProxy" in prelude
     assert "begin user source" in prelude
     assert prelude.endswith("x = 1\n")

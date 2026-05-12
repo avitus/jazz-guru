@@ -132,14 +132,17 @@ class PersistentPythonSession:
 
     async def execute(self, code: str, timeout_sec: float = 30.0) -> dict[str, Any]:
         """Run ``code`` in the persistent namespace. Returns the parsed JSON response."""
-        if not self.started:
-            await self.start()
-        assert self._proc is not None
-        assert self._proc.stdin is not None
-        assert self._proc.stdout is not None
-
-        payload = json.dumps({"code": code}).encode("utf-8") + b"\n"
         async with self._lock:  # only one in-flight call per session REPL
+            # Lazy startup happens INSIDE the lock so two concurrent
+            # execute() calls can't each spawn a subprocess and clobber
+            # self._proc, which would leak one of them.
+            if not self.started:
+                await self.start()
+            assert self._proc is not None
+            assert self._proc.stdin is not None
+            assert self._proc.stdout is not None
+
+            payload = json.dumps({"code": code}).encode("utf-8") + b"\n"
             try:
                 self._proc.stdin.write(payload)
                 await self._proc.stdin.drain()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 import textwrap
@@ -159,7 +160,11 @@ async def python_exec(
         try:
             rpc_sock, rpc_token = await rpc_server.start()
         except Exception as e:
-            # If RPC can't start (rare: permission, FS), fall back to plain.
+            # If RPC can't start (rare: permission, FS), tear down whatever
+            # the partial start() left behind (tempdir / token / socket
+            # placeholder) so we don't leak artifacts when falling back.
+            with contextlib.suppress(Exception):
+                await rpc_server.stop()
             rpc_server = None
             final_src = src_user
             env["JG_RPC_DISABLED"] = f"{type(e).__name__}: {e}"
