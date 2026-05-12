@@ -4,7 +4,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from jazz_guru.config import GoalConfig, get_goal
+from jazz_guru.logging import get_logger
 from jazz_guru.notes import render_notes_block
+from jazz_guru.skills import list_skills_metadata, skills_metadata_block
+
+log = get_logger(__name__)
 
 _TOOL_CREATION_HINT = """
 ---
@@ -43,6 +47,9 @@ class BuildInputs:
     retrieved_memory: list[str] = field(default_factory=list)
     playbook_excerpts: list[str] = field(default_factory=list)
     extra_system: str | None = None
+    # When provided, skills are filtered against this set via the conditional
+    # activation rules (``requires_tools`` / ``fallback_when_tools``).
+    allowed_tools: set[str] | None = None
 
 
 class ContextBuilder:
@@ -61,6 +68,17 @@ class ContextBuilder:
         notes_block = render_notes_block()
         if notes_block:
             sys_parts.append(notes_block)
+        # Skills metadata: terse list ("- category/name: description"), filtered
+        # against the active tool allowlist so the agent only sees relevant
+        # skills. Full content is fetched on demand via the `skill_view` tool.
+        try:
+            skills_meta = list_skills_metadata(allowed_tools=inputs.allowed_tools)
+            skills_block = skills_metadata_block(skills_meta)
+        except Exception as e:
+            log.warning("context.skills_block_failed", err=str(e))
+            skills_block = ""
+        if skills_block:
+            sys_parts.append(skills_block)
         if inputs.state_doc:
             sys_parts.append("\n---\n## Externalized state (self-model)\n" + inputs.state_doc.strip())
         if inputs.playbook_excerpts:

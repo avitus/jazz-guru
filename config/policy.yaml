@@ -40,6 +40,11 @@ tools:
   clarify:               { mode: allow }
   session_search:        { mode: allow }
 
+  # --- skills: SKILL.md procedural memory ---------------------------------
+  skills_list:           { mode: allow }
+  skill_view:            { mode: allow }
+  skill_manage:          { mode: allow }
+
 budgets:
   per_turn:
     tool_calls: 32

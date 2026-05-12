@@ -21,6 +21,8 @@ from jazz_guru.notes import (
     read_notes,
     write_notes,
 )
+from jazz_guru.skills import SkillsError, list_skills_metadata
+from jazz_guru.skills.storage import patch_skill_body, write_skill
 from jazz_guru.state import (
     EventType,
     Turn,
@@ -58,6 +60,20 @@ object with keys:
     # chars and holds the operator's profile and preferences. Use these only
     # for HIGH-CONFIDENCE facts that should always be visible without retrieval.
     # The current contents are provided below; if a file is empty, use 'write'.
+  ],
+  "skill_writes": [            # OPTIONAL: create or patch procedural skill documents
+    # Each entry uses ONE of these shapes:
+    #   {"action": "create", "category": "voicing", "name": "four_way_close",
+    #    "description": "...", "body": "...", "tags": ["..."],
+    #    "requires_tools": [...], "fallback_when_tools": [...]}
+    #   {"action": "patch",  "category": "voicing", "name": "four_way_close",
+    #    "find": "...", "replace": "..."}
+    # Use skill_writes when this session embodied a non-trivial multi-step
+    # approach (typically 5+ tool calls) that should be reusable, OR when a
+    # related existing skill needs correction. Prefer 'patch' over 'create'
+    # when an existing skill covers the topic. Names are snake_case; category
+    # is one short word (voicing|rhythm|render|workflow|...). The current
+    # skills metadata is provided below.
   ]
 }
 
@@ -75,6 +91,8 @@ class ReflectionResult:
     playbook_entries: list[dict[str, Any]] = field(default_factory=list)
     notes_patches: list[dict[str, Any]] = field(default_factory=list)
     notes_applied: int = 0
+    skill_writes: list[dict[str, Any]] = field(default_factory=list)
+    skills_applied: int = 0
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -130,6 +148,11 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
     except Exception as e:
         log.warning("reflexion.notes_read_failed", err=str(e))
         current_notes = {"AGENT_NOTES": "", "USER": ""}
+    try:
+        skills_meta = list_skills_metadata()
+    except Exception as e:
+        log.warning("reflexion.skills_meta_failed", err=str(e))
+        skills_meta = []
 
     prompt = f"""## Goal\n{goal.render_system_block()}
 
@@ -144,6 +167,9 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
 {current_notes.get('AGENT_NOTES') or '(empty)'}
 ### USER.md (current)
 {current_notes.get('USER') or '(empty)'}
+
+## Existing skills (metadata only)
+{json.dumps(skills_meta, indent=2) if skills_meta else '(none)'}
 
 ## Artifacts produced
 {json.dumps(artifacts, indent=2)}
@@ -188,6 +214,7 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
         memory_writes=_to_dict_list(data.get("memory_writes")),
         playbook_entries=_to_dict_list(data.get("playbook_entries")),
         notes_patches=_to_dict_list(data.get("notes_patches")),
+        skill_writes=_to_dict_list(data.get("skill_writes")),
         raw=data,
     )
 
@@ -243,6 +270,58 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
                 "reflexion.notes_patch_unexpected", err=str(e), file=str(file), op=op
             )
 
+    # Apply skill_writes: create new skill documents or patch existing ones.
+    # Each failure is isolated (memory + playbook already persisted above).
+    for sw in result.skill_writes:
+        action = str(sw.get("action") or "").strip().lower()
+        skill_name = str(sw.get("name") or "").strip()
+        category = str(sw.get("category") or "").strip()
+        if not skill_name or not category:
+            log.warning(
+                "reflexion.skill_write_skipped", reason="missing name/category"
+            )
+            continue
+        try:
+            if action == "create":
+                write_skill(
+                    category,
+                    skill_name,
+                    description=str(sw.get("description") or ""),
+                    body=str(sw.get("body") or ""),
+                    version=str(sw.get("version") or "1.0.0"),
+                    tags=_to_str_list(sw.get("tags")),
+                    requires_tools=_to_str_list(sw.get("requires_tools")),
+                    fallback_when_tools=_to_str_list(sw.get("fallback_when_tools")),
+                )
+            elif action == "patch":
+                patch_skill_body(
+                    category,
+                    skill_name,
+                    str(sw.get("find") or ""),
+                    str(sw.get("replace") or ""),
+                )
+            else:
+                log.warning(
+                    "reflexion.skill_action_unknown", action=action, name=skill_name
+                )
+                continue
+            result.skills_applied += 1
+        except SkillsError as e:
+            log.warning(
+                "reflexion.skill_write_failed",
+                err=str(e),
+                action=action,
+                name=skill_name,
+                category=category,
+            )
+        except Exception as e:
+            log.warning(
+                "reflexion.skill_write_unexpected",
+                err=str(e),
+                action=action,
+                name=skill_name,
+            )
+
     new_snap = {
         **snap,
         "summary": summary,
@@ -270,6 +349,7 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
                 "memory_writes": len(result.memory_writes),
                 "playbook_entries": len(result.playbook_entries),
                 "notes_applied": result.notes_applied,
+                "skills_applied": result.skills_applied,
             },
         )
     except Exception as e:
@@ -296,4 +376,5 @@ def reflexion_job(session_id_str: str) -> dict[str, Any]:
         "memory_writes": len(res.memory_writes),
         "playbook_entries": len(res.playbook_entries),
         "notes_applied": res.notes_applied,
+        "skills_applied": res.skills_applied,
     }
