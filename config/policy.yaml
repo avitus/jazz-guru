@@ -27,6 +27,11 @@ tools:
   tool_list_dynamic:     { mode: allow }
   tool_inspect:          { mode: allow }
 
+  # --- notes: always-loaded persistent facts ------------------------------
+  notes_read:            { mode: allow }
+  notes_write:           { mode: allow }
+  notes_patch:           { mode: allow }
+
 budgets:
   per_turn:
     tool_calls: 32

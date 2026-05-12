@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from jazz_guru.config import GoalConfig, get_goal
+from jazz_guru.notes import render_notes_block
 
 _TOOL_CREATION_HINT = """
 ---
@@ -54,6 +55,12 @@ class ContextBuilder:
         sys_parts: list[str] = []
         sys_parts.append(self.goal.render_system_block())
         sys_parts.append(_TOOL_CREATION_HINT)
+        # Notes sit between the (rarely changing) goal/tool-hint prefix and the
+        # (per-turn) state_doc/memory blocks. They are themselves rarely-changed
+        # so this position is friendly to the prompt cache.
+        notes_block = render_notes_block()
+        if notes_block:
+            sys_parts.append(notes_block)
         if inputs.state_doc:
             sys_parts.append("\n---\n## Externalized state (self-model)\n" + inputs.state_doc.strip())
         if inputs.playbook_excerpts:

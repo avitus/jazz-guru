@@ -164,6 +164,7 @@ def register_all() -> ToolRegistry:
         http,
         midi,
         music_xml,
+        notes,
         python_exec,
         render,
         shell,
