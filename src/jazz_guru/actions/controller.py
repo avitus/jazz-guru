@@ -37,6 +37,7 @@ class ActionController:
         policy: Policy | None = None,
         max_rounds: int | None = None,
         on_event: Any = None,
+        clarify_callback: Any = None,
     ) -> None:
         self.registry = registry or register_all()
         self.policy = policy or get_policy()
@@ -47,6 +48,11 @@ class ActionController:
         self.max_tool_calls = self.policy.budgets.per_turn.tool_calls
         self.max_rounds = max_rounds or (self.max_tool_calls + 1)
         self.on_event = on_event  # optional callable(name, payload)
+        # Optional async callback invoked when a tool returns the
+        # `__clarify__` sentinel. Signature: ``callback(payload: dict) -> str``.
+        # When None, the sentinel is forwarded to the model verbatim and the
+        # agent is expected to proceed with its own judgment.
+        self.clarify_callback = clarify_callback
         # Don't cache the allowlist as an attribute. Dynamic tools attach
         # via ContextVar inside AgentLoop.step(); a frozen set here would
         # exclude them from to_anthropic() AND fail the policy check on
@@ -186,6 +192,52 @@ class ActionController:
                 self._emit("tool_use", {"id": tu["id"], "name": tu["name"], "input": tu["input"]})
                 try:
                     out = await self.registry.invoke(tu["name"], tu["input"] or {})
+                    # `clarify` returns a sentinel that we intercept: emit a
+                    # clarify_request event, await the user (if a callback is
+                    # bound), and substitute the answer as the tool_result.
+                    if isinstance(out, dict) and "__clarify__" in out:
+                        clar = dict(out["__clarify__"] or {})
+                        self._emit(
+                            "clarify_request",
+                            {
+                                **clar,
+                                "tool_use_id": tu["id"],
+                                "name": tu["name"],
+                            },
+                        )
+                        if self.clarify_callback is not None:
+                            try:
+                                answer = await self.clarify_callback(clar)
+                            except Exception as ce:
+                                err = f"clarify_callback_failed: {type(ce).__name__}: {ce}"
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": tu["id"],
+                                    "is_error": True,
+                                    "content": err,
+                                })
+                                result.errors.append(err)
+                                self._emit(
+                                    "tool_result",
+                                    {"id": tu["id"], "name": tu["name"], "ok": False, "error": err},
+                                )
+                                continue
+                            self._emit(
+                                "clarify_response",
+                                {"tool_use_id": tu["id"], "answer": str(answer)},
+                            )
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": tu["id"],
+                                "content": [{"type": "text", "text": str(answer)}],
+                            })
+                            self._emit(
+                                "tool_result",
+                                {"id": tu["id"], "name": tu["name"], "ok": True, "clarify": True},
+                            )
+                            continue
+                        # No callback: hand the sentinel back so the agent can
+                        # proceed by its own judgment.
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tu["id"],

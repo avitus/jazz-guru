@@ -344,16 +344,55 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
 
         agent._on_event = fanout  # type: ignore[method-assign]
         agent.controller.on_event = fanout
+
+        # Split the incoming WS frames into two queues: chat messages drive
+        # the turn loop, clarify_response frames feed the clarify callback.
+        # Without this dispatcher, the clarify callback would race with the
+        # main `receive_text()` loop.
+        # ``None`` is a sentinel meaning "the reader detected disconnect" --
+        # it unblocks any pending .get() so consumers can shut down cleanly
+        # instead of hanging forever on a dead socket.
+        chat_q: asyncio.Queue[str | None] = asyncio.Queue()
+        clarify_q: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def _reader() -> None:
+            try:
+                while True:
+                    raw = await ws.receive_text()
+                    try:
+                        msg = json.loads(raw)
+                    except Exception:
+                        msg = {"message": raw}
+                    if not isinstance(msg, dict):
+                        continue
+                    frame_type = str(msg.get("type") or "chat")
+                    if frame_type == "clarify_response":
+                        await clarify_q.put(str(msg.get("answer", "")))
+                        continue
+                    user_text = str(msg.get("message", ""))
+                    if user_text:
+                        await chat_q.put(user_text)
+            except WebSocketDisconnect:
+                # Wake both consumers so they can stop instead of blocking.
+                await chat_q.put(None)
+                await clarify_q.put(None)
+
+        async def _clarify_callback(payload: dict[str, Any]) -> str:
+            # The event was already emitted by the controller, fanned out to
+            # the WS via `fanout`. Just block until the operator replies.
+            answer = await clarify_q.get()
+            if answer is None:
+                raise RuntimeError("websocket disconnected before clarify response")
+            return answer
+
+        agent.controller.clarify_callback = _clarify_callback
+        reader_task = asyncio.create_task(_reader())
         try:
             while True:
-                raw = await ws.receive_text()
-                try:
-                    msg = json.loads(raw)
-                    user_text = msg.get("message", "")
-                except Exception:
-                    user_text = raw
-                if not user_text:
-                    continue
+                user_text = await chat_q.get()
+                if user_text is None:
+                    # Reader signalled disconnect.
+                    raise WebSocketDisconnect()
                 await ws.send_json({"type": "ack", "message": user_text})
                 res = await agent.step(user_text)
                 # publish artifact list after the turn so UIs can refresh
@@ -379,6 +418,10 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
             log.warning("ws.error", err=str(e))
             with contextlib.suppress(Exception):
                 await ws.send_json({"type": "error", "error": str(e)})
+        finally:
+            reader_task.cancel()
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await reader_task
 
     return app
 
