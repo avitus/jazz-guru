@@ -160,14 +160,25 @@ def parse_skill_md(text: str) -> tuple[SkillFrontmatter, str]:
         "fallback_when_tools",
     }
     extras = {k: v for k, v in data.items() if k not in known}
+
+    def _as_str_list(key: str) -> list[str]:
+        raw = data.get(key)
+        if raw is None:
+            return []
+        if not isinstance(raw, list):
+            raise SkillsError(
+                f"frontmatter {key!r} must be a YAML list (got {type(raw).__name__})"
+            )
+        return [str(x).strip() for x in raw if str(x).strip()]
+
     fm = SkillFrontmatter(
         name=name,
         description=str(data.get("description") or "").strip(),
         version=str(data.get("version") or "1.0.0"),
         category=str(data.get("category") or "general").strip(),
-        tags=[str(t) for t in (data.get("tags") or []) if t],
-        requires_tools=[str(t) for t in (data.get("requires_tools") or []) if t],
-        fallback_when_tools=[str(t) for t in (data.get("fallback_when_tools") or []) if t],
+        tags=_as_str_list("tags"),
+        requires_tools=_as_str_list("requires_tools"),
+        fallback_when_tools=_as_str_list("fallback_when_tools"),
         extras=extras,
     )
     if not VALID_CATEGORY.match(fm.category):
@@ -325,6 +336,22 @@ def delete_skill(category: str, name: str) -> bool:
     return True
 
 
+def _normalize_adjunct_relpath(relpath: str) -> str:
+    """Restrict adjunct file operations to the standard subdirectories.
+
+    Without this, ``read/remove`` could touch ``SKILL.md`` itself or anything
+    else under the skill dir, breaking the skill's frontmatter contract via
+    the adjunct API surface.
+    """
+    rel = relpath.strip().lstrip("/")
+    top = rel.split("/", 1)[0]
+    if top not in ADJUNCT_DIRS:
+        raise SkillsError(
+            f"relpath must start with one of {ADJUNCT_DIRS} (got {top!r})"
+        )
+    return rel
+
+
 def write_skill_file(
     category: str, name: str, relpath: str, content: str
 ) -> dict[str, Any]:
@@ -336,12 +363,7 @@ def write_skill_file(
     skill_dir = _safe_skill_dir(category, name)
     if not skill_dir.exists():
         raise SkillsError(f"skill {category}/{name} does not exist")
-    rel = relpath.strip().lstrip("/")
-    top = rel.split("/", 1)[0]
-    if top not in ADJUNCT_DIRS:
-        raise SkillsError(
-            f"relpath must start with one of {ADJUNCT_DIRS} (got {top!r})"
-        )
+    rel = _normalize_adjunct_relpath(relpath)
     target = _safe_subpath(skill_dir, rel)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
@@ -352,7 +374,8 @@ def remove_skill_file(category: str, name: str, relpath: str) -> bool:
     skill_dir = _safe_skill_dir(category, name)
     if not skill_dir.exists():
         return False
-    target = _safe_subpath(skill_dir, relpath)
+    rel = _normalize_adjunct_relpath(relpath)
+    target = _safe_subpath(skill_dir, rel)
     if not target.exists():
         return False
     if target.is_dir():
@@ -365,7 +388,8 @@ def read_skill_file(category: str, name: str, relpath: str) -> str:
     skill_dir = _safe_skill_dir(category, name)
     if not skill_dir.exists():
         raise SkillsError(f"skill {category}/{name} does not exist")
-    target = _safe_subpath(skill_dir, relpath)
+    rel = _normalize_adjunct_relpath(relpath)
+    target = _safe_subpath(skill_dir, rel)
     if not target.exists() or not target.is_file():
         raise SkillsError(f"file {relpath} not found in skill {category}/{name}")
     return target.read_text(encoding="utf-8")

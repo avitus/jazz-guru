@@ -4,8 +4,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from jazz_guru.config import GoalConfig, get_goal
+from jazz_guru.logging import get_logger
 from jazz_guru.notes import render_notes_block
 from jazz_guru.skills import list_skills_metadata, skills_metadata_block
+
+log = get_logger(__name__)
 
 _TOOL_CREATION_HINT = """
 ---
@@ -71,7 +74,8 @@ class ContextBuilder:
         try:
             skills_meta = list_skills_metadata(allowed_tools=inputs.allowed_tools)
             skills_block = skills_metadata_block(skills_meta)
-        except Exception:
+        except Exception as e:
+            log.warning("context.skills_block_failed", err=str(e))
             skills_block = ""
         if skills_block:
             sys_parts.append(skills_block)

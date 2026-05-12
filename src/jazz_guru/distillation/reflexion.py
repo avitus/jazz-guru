@@ -273,7 +273,7 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
     # Apply skill_writes: create new skill documents or patch existing ones.
     # Each failure is isolated (memory + playbook already persisted above).
     for sw in result.skill_writes:
-        action = (sw.get("action") or "").lower()
+        action = str(sw.get("action") or "").strip().lower()
         skill_name = str(sw.get("name") or "").strip()
         category = str(sw.get("category") or "").strip()
         if not skill_name or not category:
@@ -289,13 +289,9 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
                     description=str(sw.get("description") or ""),
                     body=str(sw.get("body") or ""),
                     version=str(sw.get("version") or "1.0.0"),
-                    tags=[str(t) for t in (sw.get("tags") or []) if t],
-                    requires_tools=[
-                        str(t) for t in (sw.get("requires_tools") or []) if t
-                    ],
-                    fallback_when_tools=[
-                        str(t) for t in (sw.get("fallback_when_tools") or []) if t
-                    ],
+                    tags=_to_str_list(sw.get("tags")),
+                    requires_tools=_to_str_list(sw.get("requires_tools")),
+                    fallback_when_tools=_to_str_list(sw.get("fallback_when_tools")),
                 )
             elif action == "patch":
                 patch_skill_body(
