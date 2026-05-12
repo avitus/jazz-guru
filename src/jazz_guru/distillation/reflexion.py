@@ -13,6 +13,14 @@ from jazz_guru.distillation.playbook import upsert_entry
 from jazz_guru.llm import complete
 from jazz_guru.logging import get_logger
 from jazz_guru.memory import get_memory, summarize_history
+from jazz_guru.notes import (
+    AGENT_NOTES_CAP,
+    USER_NOTES_CAP,
+    NotesError,
+    patch_notes,
+    read_notes,
+    write_notes,
+)
 from jazz_guru.state import (
     EventType,
     Turn,
@@ -27,18 +35,29 @@ log = get_logger(__name__)
 
 REFLEXION_SYSTEM = """You are the agent's offline reflexion loop.
 You receive a session goal block, a transcript summary, the current self-model,
-the artifacts produced, and any errors. Produce a strict JSON object with keys:
+the durable notes, the artifacts produced, and any errors. Produce a strict JSON
+object with keys:
 
 {
   "score": 0.0-1.0,            # how well this session served the goal
   "critique": "...",           # 3-6 sentences, concrete, actionable
   "revised_plan": "...",       # the plan the agent should follow next
   "open_threads": ["..."],     # short bullets
-  "memory_writes": [           # durable observations to write to memory
+  "memory_writes": [           # durable observations to write to vector memory
     {"text": "...", "kind": "lesson"}
   ],
   "playbook_entries": [        # transferable heuristics
     {"scope": "voicing|rhythm|workflow|...", "text": "...", "score": 0.0-1.0}
+  ],
+  "notes_patches": [           # OPTIONAL: surgical edits to small always-loaded notes
+    # Each entry uses ONE of these shapes:
+    #   {"file": "AGENT_NOTES" | "USER", "op": "patch", "find": "...", "replace": "..."}
+    #   {"file": "AGENT_NOTES" | "USER", "op": "write", "content": "..."}
+    # AGENT_NOTES.md is capped at ~2500 chars and holds environment facts,
+    # project conventions, and learned techniques. USER.md is capped at ~1500
+    # chars and holds the operator's profile and preferences. Use these only
+    # for HIGH-CONFIDENCE facts that should always be visible without retrieval.
+    # The current contents are provided below; if a file is empty, use 'write'.
   ]
 }
 
@@ -54,6 +73,8 @@ class ReflectionResult:
     open_threads: list[str] = field(default_factory=list)
     memory_writes: list[dict[str, Any]] = field(default_factory=list)
     playbook_entries: list[dict[str, Any]] = field(default_factory=list)
+    notes_patches: list[dict[str, Any]] = field(default_factory=list)
+    notes_applied: int = 0
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -104,6 +125,11 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
     summary, _history = await _gather_session_text(session_id)
     snap = load_latest(session_id) or {}
     artifacts = list_session_artifacts(session_id)
+    try:
+        current_notes = read_notes()
+    except Exception as e:
+        log.warning("reflexion.notes_read_failed", err=str(e))
+        current_notes = {"AGENT_NOTES": "", "USER": ""}
 
     prompt = f"""## Goal\n{goal.render_system_block()}
 
@@ -112,6 +138,12 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
 
 ## Current self-model
 {json.dumps(snap, indent=2)}
+
+## Durable notes (caps: AGENT_NOTES={AGENT_NOTES_CAP} chars, USER={USER_NOTES_CAP} chars)
+### AGENT_NOTES.md (current)
+{current_notes.get('AGENT_NOTES') or '(empty)'}
+### USER.md (current)
+{current_notes.get('USER') or '(empty)'}
 
 ## Artifacts produced
 {json.dumps(artifacts, indent=2)}
@@ -155,6 +187,7 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
         open_threads=_to_str_list(data.get("open_threads")),
         memory_writes=_to_dict_list(data.get("memory_writes")),
         playbook_entries=_to_dict_list(data.get("playbook_entries")),
+        notes_patches=_to_dict_list(data.get("notes_patches")),
         raw=data,
     )
 
@@ -180,6 +213,32 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
             await upsert_entry(scope, text, score=score)
         except Exception as e:
             log.warning("reflexion.playbook_upsert_failed", err=str(e))
+
+    # Apply notes_patches: each entry is either a surgical patch or a full
+    # write. Failures are isolated — a bad patch shouldn't tank the rest of
+    # the reflexion (memory + playbook are already persisted above).
+    for np in result.notes_patches:
+        file = np.get("file")
+        op = (np.get("op") or "").lower() or ("patch" if "find" in np else "write")
+        if not file:
+            continue
+        try:
+            if op == "patch":
+                patch_notes(str(file), str(np.get("find") or ""), str(np.get("replace") or ""))
+            elif op == "write":
+                write_notes(str(file), str(np.get("content") or ""))
+            else:
+                log.warning("reflexion.notes_op_unknown", file=file, op=op)
+                continue
+            result.notes_applied += 1
+        except NotesError as e:
+            log.warning(
+                "reflexion.notes_patch_failed", err=str(e), file=str(file), op=op
+            )
+        except Exception as e:
+            log.warning(
+                "reflexion.notes_patch_unexpected", err=str(e), file=str(file), op=op
+            )
 
     new_snap = {
         **snap,
@@ -207,6 +266,7 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
                 "critique": result.critique[:500],
                 "memory_writes": len(result.memory_writes),
                 "playbook_entries": len(result.playbook_entries),
+                "notes_applied": result.notes_applied,
             },
         )
     except Exception as e:
@@ -232,4 +292,5 @@ def reflexion_job(session_id_str: str) -> dict[str, Any]:
         "critique": res.critique[:300],
         "memory_writes": len(res.memory_writes),
         "playbook_entries": len(res.playbook_entries),
+        "notes_applied": res.notes_applied,
     }
