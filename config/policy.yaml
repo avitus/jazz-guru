@@ -45,6 +45,9 @@ tools:
   skill_view:            { mode: allow }
   skill_manage:          { mode: allow }
 
+  # --- subagent delegation ------------------------------------------------
+  delegate_task:         { mode: allow }
+
 budgets:
   per_turn:
     tool_calls: 32
