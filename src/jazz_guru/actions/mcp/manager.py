@@ -103,16 +103,8 @@ class MCPManager:
     # ---------- runtime ops ---------------------------------------------
 
     async def stop_all(self) -> None:
-        for state in list(self.states.values()):
-            if state.client is not None:
-                try:
-                    await unbridge_server_from_registry(state.spec.name, state.bridged_tools)
-                    await state.client.stop()
-                except Exception as e:
-                    log.warning("mcp.stop_failed", name=state.spec.name, err=str(e))
-            state.client = None
-            state.status = "stopped"
-            state.bridged_tools = []
+        for name in list(self.states):
+            await self._stop_one(name)
 
     async def reload(self) -> None:
         """Re-read mcp.yaml from disk and reconcile (stop removed, start new)."""
@@ -140,12 +132,19 @@ class MCPManager:
         state = self.states.get(name)
         if state is None:
             return
-        if state.client is not None:
+        # Decouple unbridge from client.stop(): if the registry-bridge step
+        # fails, we still want to terminate the underlying subprocess /
+        # socket so it doesn't leak.
+        if state.bridged_tools:
             try:
                 await unbridge_server_from_registry(state.spec.name, state.bridged_tools)
+            except Exception as e:
+                log.warning("mcp.unbridge_failed", name=name, err=str(e))
+        if state.client is not None:
+            try:
                 await state.client.stop()
             except Exception as e:
-                log.warning("mcp.stop_failed", name=name, err=str(e))
+                log.warning("mcp.client_stop_failed", name=name, err=str(e))
         state.client = None
         state.status = "stopped"
         state.bridged_tools = []

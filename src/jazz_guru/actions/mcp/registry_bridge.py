@@ -60,16 +60,19 @@ async def bridge_server_to_registry(
         ns_name = _namespaced(spec.name, name)
         if ns_name in registry._tools:  # type: ignore[attr-defined]
             existing = registry._tools[ns_name]  # type: ignore[attr-defined]
-            if "mcp" not in existing.tags:
+            # Replace only when this is a re-registration of the SAME server's
+            # tool (the spec.name tag matches). A collision against a built-in
+            # OR against another MCP server's sanitized-name match must skip.
+            if "mcp" not in existing.tags or spec.name not in existing.tags:
                 log.warning(
                     "mcp.bridge.skip_collision",
                     server=spec.name,
                     tool=name,
                     namespaced=ns_name,
-                    reason="built-in tool with same name",
+                    reason="existing tool with same namespaced key",
                 )
                 continue
-            # Same-named MCP tool re-registration: replace.
+            # Same-named MCP tool re-registration from the same server: replace.
         schema = t.get("input_schema") or {"type": "object"}
         description = t.get("description") or f"MCP tool {name!r} from server {spec.name}"
         if not description.endswith("."):

@@ -53,9 +53,15 @@ class MCPConfig:
 def _parse_server(name: str, data: dict[str, Any]) -> MCPServerSpec:
     if not isinstance(data, dict):
         raise MCPError(f"server {name!r}: config must be a mapping")
-    if "command" in data:
+    has_command = "command" in data
+    has_url = "url" in data
+    if has_command and has_url:
+        raise MCPError(
+            f"server {name!r}: specify only one of 'command' (stdio) or 'url' (http), not both"
+        )
+    if has_command:
         transport = "stdio"
-    elif "url" in data:
+    elif has_url:
         transport = "http"
     else:
         raise MCPError(
@@ -71,16 +77,31 @@ def _parse_server(name: str, data: dict[str, Any]) -> MCPServerSpec:
         include = None
     exclude = [str(x) for x in (tools_block.get("exclude") or [])] if isinstance(tools_block, dict) else []
 
+    # Validate types so bad YAML surfaces a clear MCPError instead of a
+    # late TypeError / AttributeError during the coercion.
+    raw_args = data.get("args") or []
+    if not isinstance(raw_args, list):
+        raise MCPError(f"server {name!r}: 'args' must be a list")
+    raw_env = data.get("env") or {}
+    if not isinstance(raw_env, dict):
+        raise MCPError(f"server {name!r}: 'env' must be a mapping")
+    raw_headers = data.get("headers") or {}
+    if not isinstance(raw_headers, dict):
+        raise MCPError(f"server {name!r}: 'headers' must be a mapping")
+    raw_enabled = data.get("enabled", True)
+    if not isinstance(raw_enabled, bool):
+        raise MCPError(f"server {name!r}: 'enabled' must be a boolean")
+
     return MCPServerSpec(
         name=name,
         transport=transport,
         command=data.get("command"),
-        args=[str(a) for a in (data.get("args") or [])],
-        env={str(k): str(v) for k, v in (data.get("env") or {}).items()},
+        args=[str(a) for a in raw_args],
+        env={str(k): str(v) for k, v in raw_env.items()},
         cwd=data.get("cwd"),
         url=data.get("url"),
-        headers={str(k): str(v) for k, v in (data.get("headers") or {}).items()},
-        enabled=bool(data.get("enabled", True)),
+        headers={str(k): str(v) for k, v in raw_headers.items()},
+        enabled=raw_enabled,
         include_tools=include,
         exclude_tools=exclude,
         meta={k: v for k, v in data.items() if k not in {

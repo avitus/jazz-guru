@@ -244,10 +244,15 @@ def mcp_status(
     headers = {"X-API-Key": api_key} if api_key else {}
     try:
         r = httpx.get(f"{server.rstrip('/')}/mcp/status", headers=headers, timeout=5.0)
-    except httpx.HTTPError as e:
+        r.raise_for_status()
+        payload = r.json()
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]{server} returned {e.response.status_code}: {e.response.text[:200]}[/red]")
+        raise typer.Exit(code=1) from e
+    except (httpx.HTTPError, ValueError) as e:
         console.print(f"[red]could not reach {server}: {e}[/red]")
         raise typer.Exit(code=1) from e
-    console.print(Panel.fit(json.dumps(r.json(), indent=2), title="mcp status"))
+    console.print(Panel.fit(json.dumps(payload, indent=2), title="mcp status"))
 
 
 @mcp_app.command("reload")
@@ -263,10 +268,15 @@ def mcp_reload(
     headers = {"X-API-Key": api_key} if api_key else {}
     try:
         r = httpx.post(f"{server.rstrip('/')}/mcp/reload", headers=headers, timeout=30.0)
-    except httpx.HTTPError as e:
+        r.raise_for_status()
+        payload = r.json()
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]{server} returned {e.response.status_code}: {e.response.text[:200]}[/red]")
+        raise typer.Exit(code=1) from e
+    except (httpx.HTTPError, ValueError) as e:
         console.print(f"[red]could not reach {server}: {e}[/red]")
         raise typer.Exit(code=1) from e
-    console.print(Panel.fit(json.dumps(r.json(), indent=2), title="mcp reload"))
+    console.print(Panel.fit(json.dumps(payload, indent=2), title="mcp reload"))
 
 
 def main() -> None:
