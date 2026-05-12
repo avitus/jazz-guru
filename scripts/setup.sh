@@ -199,14 +199,136 @@ if [[ ! -f .env ]]; then
   warn "created .env from .env.example — edit it to add your ANTHROPIC_API_KEY"
 fi
 
-# --- soundfont hint -----------------------------------------------------------
-if [[ -z "${FLUIDSYNTH_SOUNDFONT:-}" ]]; then
-  if [[ "$PLATFORM" == "mac" ]]; then
-    SF_GUESS="$(brew --prefix fluid-synth 2>/dev/null)/share/fluid-synth/sf2"
-    warn "no FLUIDSYNTH_SOUNDFONT set; download a GM .sf2 (e.g. FluidR3_GM) and point .env at it"
-    warn "  one option: curl -L -o ~/FluidR3_GM.sf2 https://archive.org/download/fluidr3-gm-gs/FluidR3_GM.sf2"
+# --- audio engines + sample libraries -----------------------------------------
+# Install/build the offline renderers and the SFZ libraries referenced by
+# data/instruments.yaml. All steps are idempotent — a second `make setup`
+# is a no-op once everything is in place.
+INSTR_ROOT="${JG_INSTRUMENTS_ROOT:-$HOME/.local/share/jazz-guru/instruments}"
+SF_PATH="$INSTR_ROOT/soundfonts/FluidR3Mono_GM.sf3"
+LOCAL_BIN="$HOME/.local/bin"
+SFIZZ_BIN="$LOCAL_BIN/sfizz_render"
+
+mkdir -p "$INSTR_ROOT/soundfonts" "$LOCAL_BIN"
+
+# 1. sfizz_render — builds from source. Not in Homebrew (no formula, no tap).
+if [[ -x "$SFIZZ_BIN" ]]; then
+  ok "sfizz_render already installed at $SFIZZ_BIN"
+elif [[ "$PLATFORM" == "mac" ]]; then
+  bold "Building sfizz_render from source (sfztools/sfizz @ 1.2.3)"
+  brew list --versions cmake >/dev/null 2>&1 || brew install cmake
+  tmp_sfizz="$(mktemp -d)"
+  trap 'rm -rf "$tmp_sfizz"' EXIT
+  git clone --depth 1 --branch 1.2.3 --recurse-submodules --shallow-submodules \
+    https://github.com/sfztools/sfizz.git "$tmp_sfizz/sfizz" >/dev/null 2>&1
+  cd "$tmp_sfizz/sfizz"
+
+  # Patch 1: SfizzConfig.cmake's ARM gate matches "arm64" and unconditionally
+  # adds -mfpu=neon -mfloat-abi=hard, which Clang on arm64-darwin rejects.
+  # Tighten the regex so arm64 / aarch64 don't fall into the 32-bit-ARM branch.
+  python3 - <<'PY'
+import pathlib
+p = pathlib.Path("cmake/SfizzConfig.cmake")
+s = p.read_text()
+needle = 'elseif(PROJECT_SYSTEM_PROCESSOR MATCHES "(arm.*)")'
+repl = 'elseif(PROJECT_SYSTEM_PROCESSOR MATCHES "^arm" AND NOT PROJECT_SYSTEM_PROCESSOR MATCHES "^arm64" AND NOT PROJECT_SYSTEM_PROCESSOR MATCHES "^aarch64")'
+if needle in s:
+    p.write_text(s.replace(needle, repl))
+PY
+
+  # Patch 2: atomic_queue's `Base::template do_pop_any(...)` is rejected by
+  # Clang 16+ which requires an explicit `<>` after `template`-prefixed names.
+  python3 - <<'PY'
+import pathlib
+p = pathlib.Path("external/atomic_queue/include/atomic_queue/atomic_queue.h")
+s = p.read_text()
+for n, r in [
+    ("Base::template do_pop_any(states_[index]",  "Base::template do_pop_any<>(states_[index]"),
+    ("Base::template do_push_any(std::forward<U>(element)", "Base::template do_push_any<>(std::forward<U>(element)"),
+]:
+    if n in s:
+        s = s.replace(n, r)
+p.write_text(s)
+PY
+
+  cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    -DSFIZZ_RENDER=ON -DSFIZZ_JACK=OFF -DSFIZZ_TESTS=OFF \
+    -DSFIZZ_DEMOS=OFF -DSFIZZ_BENCHMARKS=OFF >/dev/null
+  cmake --build build --target sfizz_render -j "$(sysctl -n hw.ncpu)" >/dev/null
+  cp build/library/bin/sfizz_render "$SFIZZ_BIN"
+  chmod +x "$SFIZZ_BIN"
+  cd - >/dev/null
+  rm -rf "$tmp_sfizz"
+  trap - EXIT
+  ok "sfizz_render installed at $SFIZZ_BIN"
+  if ! printf '%s\n' "$PATH" | tr ':' '\n' | grep -qx "$LOCAL_BIN"; then
+    warn "$LOCAL_BIN is not on \$PATH — add it to your shell rc so jazz-guru can find sfizz_render"
   fi
+else
+  warn "sfizz_render install only automated on macOS; build from source per https://github.com/sfztools/sfizz"
 fi
+
+# 2. SFZ sample libraries — paths must match data/instruments.yaml. Each call
+# pins to a specific upstream SHA and verifies the expected .sfz files exist
+# post-clone, so an upstream rename fails setup loudly instead of breaking
+# render_midi later. Bump the SHA in lockstep with any path change in
+# data/instruments.yaml.
+bold "Cloning SFZ libraries into $INSTR_ROOT (~1.1 GB total; first run only)"
+clone_lib() {
+  local repo="$1" dst="$2" size="$3" ref="$4"
+  shift 4
+  local target="$INSTR_ROOT/$dst"
+  if [[ -d "$target/.git" ]]; then
+    ok "$dst already present"
+  else
+    warn "cloning $repo @ ${ref:0:7} (~$size) -> $dst"
+    mkdir -p "$target"
+    git -C "$target" init -q
+    git -C "$target" remote add origin "https://github.com/sfzinstruments/$repo.git"
+    git -C "$target" fetch --depth 1 -q origin "$ref"
+    git -C "$target" checkout -q FETCH_HEAD
+  fi
+  local rel
+  for rel in "$@"; do
+    [[ -f "$target/$rel" ]] || die "expected library file missing after clone of $repo: $dst/$rel"
+  done
+}
+clone_lib MTG.SoloSax         mtg-solo-sax 220MB b494d256549b3d088fdec176ce82867f8a1f58b2 \
+  "MTG Solo Saxophones/MTG Tenor Sax.sfz" \
+  "MTG Solo Saxophones/MTG Alto Sax.sfz" \
+  "MTG Solo Saxophones/MTG Soprano Sax.sfz" \
+  "MTG Solo Saxophones/MTG Baritone Sax.sfz"
+clone_lib SalamanderGrandPiano salamander  1.4GB  3382bf9496bba2486f5ab0de55a264d1dfc38404 \
+  "Salamander Grand Piano V3.sfz"
+clone_lib dsmolken.double-bass smolken-bass 533MB c2985eb647109d2a8f30a70071e3e163339d7396 \
+  "d_smolken_rubner_bass_pizz.sfz"
+
+# 3. FluidR3 GM soundfont — MuseScore's mirror is the most reliable host.
+if [[ -f "$SF_PATH" ]]; then
+  ok "soundfont already present at $SF_PATH"
+else
+  bold "Downloading FluidR3Mono_GM.sf3 (~14 MB) from MuseScore mirror"
+  curl -fsSL --retry 3 -o "$SF_PATH.tmp" \
+    "https://github.com/musescore/MuseScore/raw/2.1/share/sound/FluidR3Mono_GM.sf3"
+  mv "$SF_PATH.tmp" "$SF_PATH"
+  ok "soundfont installed at $SF_PATH"
+fi
+
+# 4. Wire FLUIDSYNTH_SOUNDFONT + JG_INSTRUMENTS_ROOT in .env so runtime points
+# at what we just provisioned. Replace any existing value (even non-blank —
+# otherwise setup downloads to one path but runtime reads another), and append
+# the key if .env is missing it entirely. Pydantic-settings treats a `FOO=`
+# line as the literal empty string and overrides the Python default, so we
+# always emit a concrete path.
+awk -v sf="$SF_PATH" -v root="$INSTR_ROOT" '
+  /^FLUIDSYNTH_SOUNDFONT=/ {print "FLUIDSYNTH_SOUNDFONT="sf; seen_sf=1; next}
+  /^JG_INSTRUMENTS_ROOT=/  {print "JG_INSTRUMENTS_ROOT="root; seen_root=1; next}
+  {print}
+  END {
+    if (!seen_sf)   print "FLUIDSYNTH_SOUNDFONT="sf
+    if (!seen_root) print "JG_INSTRUMENTS_ROOT="root
+  }
+' .env > .env.tmp && mv .env.tmp .env
+ok ".env wired (FLUIDSYNTH_SOUNDFONT, JG_INSTRUMENTS_ROOT)"
 
 # --- alembic ------------------------------------------------------------------
 bold "Running alembic migrations"

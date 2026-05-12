@@ -8,12 +8,13 @@
 # Engines:
 #   fluidsynth  - reads SF2/SF3 (General MIDI). Bundled with FluidSynth.
 #   sfizz       - reads SFZ via the `sfizz_render` CLI (offline render).
-#                 Install: build sfizz from https://github.com/sfztools/sfizz
-#                 with -DSFIZZ_RENDER=ON, or use a distro that ships
-#                 sfizz_render (some Linux packages do).
-#   liquidsfz   - reads SFZ via `liquidsfz --no-jack --render`. `brew install
-#                 liquidsfz` works on macOS but check that your build supports
-#                 --render (older builds are JACK-only).
+#                 Not in Homebrew. `make setup` builds it from source against
+#                 sfizz 1.2.3 with two small patches (ARM-flag gate + a
+#                 Clang-16 atomic_queue fix) and drops the binary in
+#                 ~/.local/bin/sfizz_render.
+#   liquidsfz   - reads SFZ via `liquidsfz --no-jack --render`. Not packaged in
+#                 Homebrew either; build from https://github.com/swesterfeld/liquidsfz
+#                 if you want it as an alternative engine.
 #
 # Library paths:
 #   - Absolute paths are used as-is.
@@ -45,9 +46,10 @@ presets:
       gain_db: 0
       normalize: false
 
-  # MTG Solo Sax (CC-BY 4.0, https://github.com/sfzinstruments/MTG.SoloSax).
+  # MTG Solo Sax (CC-BY 4.0).
+  # `git clone --depth 1 https://github.com/sfzinstruments/MTG.SoloSax \
+  #     $JG_INSTRUMENTS_ROOT/mtg-solo-sax` (~220 MB).
   # Recorded with U87, 24/48 — the same library mankunku uses.
-  # `git clone --depth 1` it under $JG_INSTRUMENTS_ROOT/mtg-solo-sax/.
   # Each instrument has two variants: looped (default, smoother sustain) and
   # `(NL)` no-loop (raw recordings).
   tenor-sax-mtg:
@@ -94,10 +96,11 @@ presets:
       normalize: true
 
   # Salamander Grand Piano V3 (CC-BY 3.0).
-  # Mirror: https://github.com/sfzinstruments/SalamanderGrandPiano
+  # `git clone --depth 1 https://github.com/sfzinstruments/SalamanderGrandPiano \
+  #     $JG_INSTRUMENTS_ROOT/salamander` (~1.4 GB).
   salamander-piano:
     engine: sfizz
-    library: salamander/SalamanderGrandPianoV3.sfz
+    library: "salamander/Salamander Grand Piano V3.sfz"
     description: Salamander Grand Piano V3.
     post:
       lowpass_hz: 12000
@@ -105,10 +108,12 @@ presets:
       normalize: true
 
   # Smolken Pizzicato Bass (CC-BY 4.0).
-  # https://github.com/sfzinstruments/Smolken-pizzicato-double-bass
+  # `git clone --depth 1 https://github.com/sfzinstruments/dsmolken.double-bass \
+  #     $JG_INSTRUMENTS_ROOT/smolken-bass` (~533 MB).
+  # The repo also ships `_arco.sfz` and `_switched.sfz` if you want those.
   upright-bass-smolken:
     engine: sfizz
-    library: smolken-bass/SmolkenPizzBass.sfz
+    library: smolken-bass/d_smolken_rubner_bass_pizz.sfz
     description: Smolken Pizzicato double-bass.
     post:
       lowpass_hz: 3500
