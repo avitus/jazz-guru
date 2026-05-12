@@ -7,7 +7,10 @@ execution backend used by ``python_exec`` with ``backend="persistent"``.
 from __future__ import annotations
 
 from jazz_guru.actions.sandbox._impl import (
+    data_dir,
+    resolve_in_safe,
     resolve_in_workspace,
+    safe_roots,
     session_workspace,
     workspace_root,
 )
@@ -24,9 +27,12 @@ __all__ = [
     "PersistentPythonSession",
     "attach_persistent",
     "current_persistent",
+    "data_dir",
     "detach_persistent",
     "get_or_create_session_repl",
+    "resolve_in_safe",
     "resolve_in_workspace",
+    "safe_roots",
     "session_workspace",
     "stop_all_persistent",
     "workspace_root",

@@ -52,6 +52,19 @@ class ToolPolicy(BaseModel):
     timeout_sec: int | None = None
     mem_mb: int | None = None
     feature_flag: str | None = None
+    max_result_bytes: int | None = None
+
+
+class ToolsetSpec(BaseModel):
+    """Named bundle of tools sharing a single allow/deny + feature_flag.
+
+    Loose binding: tools don't know which toolset they belong to. Policy
+    resolution order in :meth:`Policy.for_tool` is per-name → toolset → default.
+    """
+
+    tools: list[str] = Field(default_factory=list)
+    mode: str = "allow"
+    feature_flag: str | None = None
 
 
 class BudgetTurn(BaseModel):
@@ -73,11 +86,29 @@ class Policy(BaseModel):
     version: int = 1
     default: str = "allow"
     auto_approve: bool = True
+    default_max_result_bytes: int = 10_000
     tools: dict[str, ToolPolicy] = Field(default_factory=dict)
+    toolsets: dict[str, ToolsetSpec] = Field(default_factory=dict)
     budgets: Budgets = Field(default_factory=Budgets)
 
+    def toolset_for_tool(self, name: str) -> ToolsetSpec | None:
+        matches = [(ts_name, ts) for ts_name, ts in self.toolsets.items() if name in ts.tools]
+        if len(matches) > 1:
+            ids = sorted(m[0] for m in matches)
+            raise ValueError(
+                f"tool '{name}' belongs to multiple toolsets {ids}; policy "
+                "resolution would be YAML-order dependent. Move the tool into "
+                "exactly one toolset, or split it out into its own per-tool entry."
+            )
+        return matches[0][1] if matches else None
+
     def for_tool(self, name: str) -> ToolPolicy:
-        return self.tools.get(name, ToolPolicy(mode=self.default))
+        if name in self.tools:
+            return self.tools[name]
+        ts = self.toolset_for_tool(name)
+        if ts is not None:
+            return ToolPolicy(mode=ts.mode, feature_flag=ts.feature_flag)
+        return ToolPolicy(mode=self.default)
 
 
 class Settings(BaseSettings):
@@ -123,6 +154,7 @@ class Settings(BaseSettings):
     jg_workspace_dir: Path = Path("./workspace")
     jg_state_dir: Path = Path("./workspace/state")
     jg_trace_dir: Path = Path("./workspace/traces")
+    jg_data_dir: Path = Path("./data")
 
     # Goal
     jg_goal_file: Path = Path("./config/goal.md")
@@ -130,8 +162,12 @@ class Settings(BaseSettings):
     jg_policy_file: Path = Path("./config/policy.yaml")
 
     # Instruments / rendering presets
-    jg_instruments_file: Path = Path("./config/instruments.yaml")
+    jg_instruments_file: Path = Path("./data/instruments.yaml")
     jg_instruments_root: Path = Path.home() / ".local/share/jazz-guru/instruments"
+
+    # Sandbox
+    jg_safe_extra_paths: list[Path] = Field(default_factory=list)
+    jg_os_sandbox: int = 0
 
     # Web search
     tavily_api_key: str = ""
@@ -194,12 +230,16 @@ def get_policy() -> Policy:
 
 
 def clear_config_caches() -> None:
-    """Drop all three config caches so a long-running process re-reads .env + YAML.
+    """Drop all config caches so a long-running process re-reads .env + YAML.
 
-    Settings / goal / policy are cached independently; clearing only one
-    leaves the others stale. Use this from anything that mutates ``.env``
-    or the YAML files in a live server/worker.
+    Settings / goal / policy / presets are cached independently; clearing
+    only one leaves the others stale. Use this from anything that mutates
+    ``.env`` or the YAML files in a live server/worker.
     """
     get_settings.cache_clear()
     get_goal.cache_clear()
     get_policy.cache_clear()
+    # Local import to avoid a circular dep at module-load time.
+    from jazz_guru.presets import clear_presets_cache
+
+    clear_presets_cache()

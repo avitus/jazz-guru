@@ -13,6 +13,7 @@ from jazz_guru.actions.jobs import start_background_subprocess
 from jazz_guru.actions.registry import registry
 from jazz_guru.actions.rpc import ToolRPCServer, build_rpc_prelude
 from jazz_guru.actions.sandbox import get_or_create_session_repl, session_workspace
+from jazz_guru.actions.sandbox_profile import wrap_subprocess
 from jazz_guru.config import get_policy, get_settings
 
 
@@ -173,12 +174,10 @@ async def python_exec(
             env["JG_RPC_SOCK"] = rpc_sock
             env["JG_RPC_TOKEN"] = rpc_token
 
+    argv = wrap_subprocess([sys.executable, "-I", "-c", final_src], cwd)
     try:
         proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-I",
-            "-c",
-            final_src,
+            *argv,
             cwd=str(cwd),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,

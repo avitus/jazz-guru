@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from jazz_guru.actions.pruning import prune_tool_result
 from jazz_guru.actions.registry import ToolRegistry, register_all
 from jazz_guru.config import Policy, get_policy, get_settings
-from jazz_guru.llm import LLMResponse, LLMUsage, complete
+from jazz_guru.llm import LLMResponse, LLMUsage, complete_stream
 from jazz_guru.logging import get_logger
 
 log = get_logger(__name__)
@@ -95,25 +96,26 @@ class ActionController:
             tools = self.registry.to_anthropic(allowed=allowed)
             result.rounds = round_idx + 1
             self._emit("llm_request", {"round": round_idx, "messages_len": len(result.messages)})
-
-            def _on_delta(payload: dict[str, Any], _round: int = round_idx) -> None:
-                # _round binds the current iteration's round_idx into the closure
-                # so deltas from a stalled round can't get tagged with a later
-                # round's number if the controller is reused. (Defensive — in
-                # practice rounds are strictly sequential.)
-                self._emit("llm_delta", {"round": _round, **payload})
-
+            resp: LLMResponse | None = None
             try:
-                resp: LLMResponse = await complete(
+                async for evt in complete_stream(
                     result.messages,
                     system=system,
                     tools=tools,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    on_delta=_on_delta,
-                )
+                ):
+                    if evt["type"] == "text_delta":
+                        self._emit("text_delta", {"round": round_idx, "delta": evt["delta"]})
+                    elif evt["type"] == "done":
+                        resp = evt["response"]
             except Exception as e:
                 err = f"llm error: {e}"
+                result.errors.append(err)
+                self._emit("error", {"phase": "llm", "error": err})
+                break
+            if resp is None:
+                err = "llm stream ended without a final response"
                 result.errors.append(err)
                 self._emit("error", {"phase": "llm", "error": err})
                 break
@@ -195,6 +197,8 @@ class ActionController:
                     # `clarify` returns a sentinel that we intercept: emit a
                     # clarify_request event, await the user (if a callback is
                     # bound), and substitute the answer as the tool_result.
+                    # Sentinel detection happens BEFORE pruning so we don't
+                    # accidentally externalize the dict's shape.
                     if isinstance(out, dict) and "__clarify__" in out:
                         clar = dict(out["__clarify__"] or {})
                         self._emit(
@@ -238,12 +242,24 @@ class ActionController:
                             continue
                         # No callback: hand the sentinel back so the agent can
                         # proceed by its own judgment.
+                        visible: Any = out
+                        manifest: dict[str, Any] | None = None
+                    else:
+                        visible, manifest = prune_tool_result(
+                            tu["name"],
+                            out,
+                            policy=self.policy.for_tool(tu["name"]),
+                            default_max_bytes=self.policy.default_max_result_bytes,
+                        )
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tu["id"],
-                        "content": _to_tool_result_content(out),
+                        "content": _to_tool_result_content(visible),
                     })
-                    self._emit("tool_result", {"id": tu["id"], "name": tu["name"], "ok": True})
+                    tr_payload: dict[str, Any] = {"id": tu["id"], "name": tu["name"], "ok": True}
+                    if manifest is not None:
+                        tr_payload["manifest"] = manifest
+                    self._emit("tool_result", tr_payload)
                 except Exception as e:
                     err = f"{type(e).__name__}: {e}"
                     tool_results.append({

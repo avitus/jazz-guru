@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
+from jazz_guru.actions.schema import normalize_input_schema
+
 if TYPE_CHECKING:
     from jazz_guru.actions.dynamic import DynamicRegistry, DynamicSpec
 
@@ -78,18 +80,17 @@ class ToolRegistry:
         tags: tuple[str, ...] = (),
     ) -> Callable[[ToolHandler], ToolHandler]:
         def deco(fn: ToolHandler) -> ToolHandler:
-            schema: dict[str, Any]
+            raw: dict[str, Any] | None
             if input_model is not None:
-                schema = input_model.model_json_schema()
-                schema.pop("title", None)
+                raw = input_model.model_json_schema()
             elif input_schema is not None:
-                schema = input_schema
+                raw = input_schema
             else:
-                schema = {"type": "object", "properties": {}, "additionalProperties": False}
+                raw = None
             self._tools[name] = ToolSpec(
                 name=name,
                 description=description,
-                input_schema=schema,
+                input_schema=normalize_input_schema(raw),
                 handler=fn,
                 tags=tags,
             )
@@ -168,6 +169,7 @@ def register_all() -> ToolRegistry:
         music_xml,
         notes,
         patch,
+        presets,
         process,
         python_exec,
         render,

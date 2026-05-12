@@ -11,6 +11,7 @@ Loads agent-authored Python source as a callable tool. Two execution strategies:
 
 Each generated tool exposes a ``run(**kwargs) -> dict | str`` (or async).
 """
+
 from __future__ import annotations
 
 import ast
@@ -29,6 +30,8 @@ from typing import Any
 
 from jazz_guru.actions.context import current
 from jazz_guru.actions.sandbox import session_workspace, workspace_root
+from jazz_guru.actions.sandbox_profile import wrap_subprocess
+from jazz_guru.actions.schema import normalize_input_schema
 from jazz_guru.config import get_policy
 
 VALID_NAME = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
@@ -84,9 +87,7 @@ class DynamicSpec:
 
 def validate_name(name: str) -> str:
     if not VALID_NAME.match(name):
-        raise ToolValidationError(
-            f"invalid tool name '{name}': must match {VALID_NAME.pattern}"
-        )
+        raise ToolValidationError(f"invalid tool name '{name}': must match {VALID_NAME.pattern}")
     if name in RESERVED:
         raise ToolValidationError(f"name '{name}' is reserved")
     return name
@@ -94,19 +95,22 @@ def validate_name(name: str) -> str:
 
 def validate_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     if schema is None:
-        return {"type": "object", "properties": {}, "additionalProperties": False}
+        try:
+            return normalize_input_schema(None)
+        except ToolValidationError:
+            raise
+        except Exception as err:
+            raise ToolValidationError(f"invalid input_schema: {err}") from err
     if not isinstance(schema, dict):
         raise ToolValidationError("input_schema must be an object")
     if schema.get("type", "object") != "object":
         raise ToolValidationError("top-level input_schema.type must be 'object'")
-    # Return a normalized copy instead of mutating the caller's dict —
-    # callers that reuse or inspect the original shouldn't see surprise
-    # `additionalProperties: false` etc. injected by validation.
-    normalized = dict(schema)
-    normalized.setdefault("type", "object")
-    normalized.setdefault("properties", {})
-    normalized.setdefault("additionalProperties", False)
-    return normalized
+    try:
+        return normalize_input_schema(schema)
+    except ToolValidationError:
+        raise
+    except Exception as err:
+        raise ToolValidationError(f"invalid input_schema: {err}") from err
 
 
 def validate_source(source: str) -> None:
@@ -170,7 +174,7 @@ def _runner_template() -> str:
     # source can contain arbitrary ``{...}`` literals (dict literals,
     # f-strings, etc.) without breaking interpolation.
     return textwrap.dedent(
-        f'''
+        f"""
         import json, sys, traceback, asyncio, inspect
 
         # ---- begin user source -------------------------------------------
@@ -199,7 +203,7 @@ def _runner_template() -> str:
                 print(json.dumps({{"value": str(result)}}), flush=True)
 
         _main()
-        '''
+        """
     ).strip()
 
 
@@ -208,11 +212,9 @@ async def _run_subprocess(spec: DynamicSpec, kwargs: dict[str, Any]) -> Any:
     timeout = policy.timeout_sec or 30
     src = _runner_template().replace(_USER_SOURCE_MARKER, spec.source)
     cwd = session_workspace(current().session_id)
+    argv = wrap_subprocess([sys.executable, "-I", "-c", src], cwd)
     proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-I",
-        "-c",
-        src,
+        *argv,
         cwd=str(cwd),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
@@ -231,7 +233,11 @@ async def _run_subprocess(spec: DynamicSpec, kwargs: dict[str, Any]) -> Any:
     err_s = err.decode("utf-8", errors="replace")
     if proc.returncode != 0:
         try:
-            return json.loads(out_s.splitlines()[-1]) if out_s else {"__error__": err_s or "non-zero exit"}
+            return (
+                json.loads(out_s.splitlines()[-1])
+                if out_s
+                else {"__error__": err_s or "non-zero exit"}
+            )
         except Exception:
             return {"__error__": err_s or out_s}
     if not out_s:

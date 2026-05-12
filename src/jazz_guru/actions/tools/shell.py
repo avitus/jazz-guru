@@ -8,6 +8,7 @@ from jazz_guru.actions.context import current
 from jazz_guru.actions.jobs import start_background_subprocess
 from jazz_guru.actions.registry import registry
 from jazz_guru.actions.sandbox import session_workspace
+from jazz_guru.actions.sandbox_profile import wrap_subprocess
 from jazz_guru.config import get_policy
 
 
@@ -63,8 +64,9 @@ async def shell(
 
     policy = get_policy().for_tool("shell")
     timeout = timeout_sec or policy.timeout_sec or 60
-    proc = await asyncio.create_subprocess_shell(
-        command,
+    argv = wrap_subprocess(["/bin/sh", "-c", command], cwd)
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
