@@ -52,8 +52,16 @@ async def upsert(
     sha = hash_source(source)
     sid = uuid_mod.UUID(owner_session_id) if owner_session_id else None
     async with session_scope() as s:
+        # Row-lock the live tool row before computing next_version. Without
+        # FOR UPDATE, two concurrent upserts can both read version v and try
+        # to insert a snapshot with version v, colliding on the
+        # (tool_id, version) uniqueness constraint and corrupting history.
         existing = (
-            await s.execute(select(GeneratedTool).where(GeneratedTool.name == name))
+            await s.execute(
+                select(GeneratedTool)
+                .where(GeneratedTool.name == name)
+                .with_for_update()
+            )
         ).scalar_one_or_none()
         if existing is None:
             row = GeneratedTool(
@@ -208,8 +216,15 @@ async def rollback(name: str, to_version: int) -> RollbackResult:
     distinguish "we rolled back" from "we never went there."
     """
     async with session_scope() as s:
+        # Row-lock to prevent a concurrent upsert from also computing
+        # next_version against the same baseline — see the analogous
+        # comment in ``upsert``.
         tool = (
-            await s.execute(select(GeneratedTool).where(GeneratedTool.name == name))
+            await s.execute(
+                select(GeneratedTool)
+                .where(GeneratedTool.name == name)
+                .with_for_update()
+            )
         ).scalar_one_or_none()
         if tool is None:
             return RollbackResult(ok=False, error=f"unknown tool '{name}'")
