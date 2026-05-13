@@ -40,12 +40,13 @@
     <li><a href="#reflexion"><span class="num">08</span>Distillation / Reflexion</a></li>
     <li><a href="#eval"><span class="num">09</span>Eval / regression suite</a></li>
     <li><a href="#audio"><span class="num">10</span>Audio rendering pipeline</a></li>
-    <li><a href="#config"><span class="num">11</span>Configuration sources</a></li>
-    <li><a href="#obs"><span class="num">12</span>Observability</a></li>
-    <li><a href="#fs"><span class="num">13</span>Filesystem &amp; sandbox</a></li>
-    <li><a href="#server"><span class="num">14</span>Server surface &amp; clients</a></li>
-    <li><a href="#mcp"><span class="num">15</span>MCP &amp; subagents</a></li>
-    <li><a href="#reference"><span class="num">16</span>Reference</a></li>
+    <li><a href="#music"><span class="num">11</span>Music backends &amp; analyze_practice_take</a></li>
+    <li><a href="#config"><span class="num">12</span>Configuration sources</a></li>
+    <li><a href="#obs"><span class="num">13</span>Observability</a></li>
+    <li><a href="#fs"><span class="num">14</span>Filesystem &amp; sandbox</a></li>
+    <li><a href="#server"><span class="num">15</span>Server surface &amp; clients</a></li>
+    <li><a href="#mcp"><span class="num">16</span>MCP &amp; subagents</a></li>
+    <li><a href="#reference"><span class="num">17</span>Reference</a></li>
   </ol>
 </aside>
 
@@ -626,6 +627,9 @@ async def fs_read(**kwargs) -&gt; dict:
       <tr><td>music · render &amp; presets</td>
           <td><code>render_midi</code>, <code>preset_list</code>, <code>preset_get</code>, <code>preset_upsert</code>, <code>preset_delete</code></td>
           <td>MIDI&rarr;WAV through FluidSynth / sfizz / liquidsfz, ffmpeg post chain, agent-mutable preset surface.</td></tr>
+      <tr><td>music · analysis &amp; workflows</td>
+          <td><code>analyze_practice_take</code>, <code>build_backing_track</code>, <code>generate_exercise</code>, <code>generate_music</code></td>
+          <td>Practice-take pipeline (Basic Pitch / Omnizart / MT3 / Music Flamingo, lazy), symbolic backing tracks, MusicXML exercises, optional Magenta&nbsp;RT / ElevenLabs generation. See <a href="#music">&sect;11</a>.</td></tr>
       <tr><td>perception</td>
           <td><code>audio_analyze</code>, <code>vision</code>, <code>tts</code></td>
           <td>librosa-based audio analysis, image understanding via vision, optional TTS (<code>FEATURE_TTS=1</code>).</td></tr>
@@ -643,7 +647,7 @@ async def fs_read(**kwargs) -&gt; dict:
           <td>SKILL.md procedural-memory surface.</td></tr>
       <tr><td>subagent</td>
           <td><code>delegate_task</code></td>
-          <td>Spawn a child agent for an isolated sub-task. See <a href="#mcp">&sect;15</a>.</td></tr>
+          <td>Spawn a child agent for an isolated sub-task. See <a href="#mcp">&sect;16</a>.</td></tr>
     </tbody>
   </table>
   </div>
@@ -700,7 +704,7 @@ async def fs_read(**kwargs) -&gt; dict:
       hatches by design &mdash; there is no path filtering inside the child
       process. Set <code>JG_OS_SANDBOX=1</code> to additionally wrap them and
       dynamic-tool subprocesses with <code>sandbox-exec -f data/sandbox/jg.sb</code>;
-      see <a href="#fs">&sect;13</a>.</p>
+      see <a href="#fs">&sect;14</a>.</p>
     </div>
   </div>
 </section>
@@ -826,7 +830,7 @@ async def fs_read(**kwargs) -&gt; dict:
       <tr><td><code>events</code></td>
           <td>The event stream (one row per controller emission).</td>
           <td><code>session_id</code>, optional <code>turn_id</code>,
-              <code>type</code> (indexed; <a href="#obs">&sect;12</a>),
+              <code>type</code> (indexed; <a href="#obs">&sect;13</a>),
               <code>payload JSON</code>, <code>ts</code> (indexed).</td></tr>
       <tr><td><code>snapshots</code></td>
           <td>References to <code>workspace/state/*/turn_*.json</code> on disk.</td>
@@ -1213,9 +1217,200 @@ presets:
   </p>
 </section>
 
-<!-- ===== 11 CONFIG ===== -->
+<!-- ===== 11 MUSIC BACKENDS ===== -->
+<section id="music" class="s">
+  <h2><span class="num">11</span>Music backends &amp; <code>analyze_practice_take</code></h2>
+  <p class="lede">
+    The agent keeps a single LLM (Claude) as the brain. For music-specific
+    work &mdash; audio-to-MIDI transcription, chord/beat analysis, music
+    understanding, and audio generation &mdash; it delegates to a swappable
+    adapter layer under
+    <span class="file">src/jazz_guru/<b>music/</b></span>. Optional
+    dependencies are lazy-imported, so the harness boots regardless of
+    which models are installed; a missing dep becomes a
+    non-fatal <em>warning</em> on the orchestrator's result.
+  </p>
+
+  <h3>Roles &amp; adapters</h3>
+  <div class="table-wrap">
+  <table class="tbl">
+    <thead><tr><th>Role</th><th>Protocol</th><th>Adapters</th><th>Cost / install</th></tr></thead>
+    <tbody>
+      <tr><td>Transcription (audio &rarr; MIDI)</td>
+          <td><code>TranscriptionBackend</code></td>
+          <td><code>basic_pitch</code>, <code>mt3</code></td>
+          <td>Basic Pitch is CPU-friendly; MT3 needs the JAX/T5X stack or a configured CLI wrapper.</td></tr>
+      <tr><td>Chord / beat analysis</td>
+          <td><code>ChordAnalysisBackend</code>, <code>BeatTrackingBackend</code></td>
+          <td><code>librosa</code> (always on), <code>omnizart</code></td>
+          <td>librosa ships with the wheel; omnizart needs
+              <code>omnizart download-checkpoints</code> after install.</td></tr>
+      <tr><td>Music understanding</td>
+          <td><code>MusicUnderstandingBackend</code></td>
+          <td><code>librosa</code>, <code>music_flamingo</code></td>
+          <td>Music Flamingo loads NVIDIA Audio Flamingo 3 via
+              <code>transformers</code> (~several GB on first call).</td></tr>
+      <tr><td>Generation (prompt &rarr; audio)</td>
+          <td><code>MusicGenerationBackend</code></td>
+          <td><code>magenta_rt</code>, <code>elevenlabs_music</code></td>
+          <td>Magenta RT supports CLI or python module; ElevenLabs Music
+              is a hosted API (requires <code>ELEVENLABS_API_KEY</code>).</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>
+    Each adapter inherits from
+    <code>jazz_guru.music.interfaces.BaseBackend</code> for the shared
+    <code>name</code> / <code>install_hint</code> / <code>_probe()</code> /
+    <code>is_available()</code> / <code>_unavailable()</code> contract.
+    Stubs that haven't been wired up yet raise
+    <code>BackendUnavailableError</code> with the install hint baked into
+    the message.
+  </p>
+
+  <h3>Backend selection</h3>
+  <p>
+    Backends are pinned per role via env vars (see <a href="#config">&sect;12</a>).
+    The defaults are conservative so a fresh install boots cleanly without
+    any optional packages:
+  </p>
+  <pre><code>MUSIC_TRANSCRIPTION_BACKEND=none           # or: basic_pitch | mt3
+MUSIC_ANALYSIS_BACKEND=librosa             # or: omnizart | none
+MUSIC_UNDERSTANDING_BACKEND=none           # or: librosa | music_flamingo
+MUSIC_GENERATION_BACKEND=none              # or: magenta_rt | elevenlabs_music
+
+JG_MT3_CLI=                                # e.g. "python -m mt3.inference"
+JG_MT3_CLI_TIMEOUT_SEC=600
+JG_MAGENTA_RT_CLI=
+JG_MAGENTA_RT_CLI_TIMEOUT_SEC=300
+MUSIC_FLAMINGO_MODEL=nvidia/audio-flamingo-3-hf
+MUSIC_FLAMINGO_MAX_NEW_TOKENS=256
+ELEVENLABS_API_KEY=
+ELEVENLABS_MUSIC_MODEL=music_v1</code></pre>
+  <p>
+    Selection happens through
+    <code>jazz_guru.music.registry.get_*_backend(name=None)</code>: the
+    factory reads settings, lazy-imports the matching adapter module, and
+    returns either an instance or <code>None</code> when the role is
+    disabled. Unknown names raise <code>BackendUnavailableError</code> so
+    typos surface immediately.
+  </p>
+
+  <h3><code>analyze_practice_take</code> &mdash; the orchestrator</h3>
+  <p>
+    <span class="file">music/<b>analyze.py</b></span> exposes the
+    practice-take pipeline as
+    <code>analyze_practice_take(audio_path, chart=..., instrument=..., lead_sheet_path=..., expected_key=..., expected_tempo_bpm=...)</code>.
+    It calls every configured backend in turn, collects partial results,
+    and assembles a typed <code>PracticeFeedback</code> bundle. Each
+    backend runs on a thread (<code>asyncio.to_thread</code>) so the agent
+    loop never blocks. The orchestrator <em>never raises</em>:
+    <code>BackendUnavailableError</code> and unexpected exceptions become
+    <code>warnings</code> entries on the result.
+  </p>
+  <div class="boxes">
+    <div class="box k">
+      <h4><code>transcription</code></h4>
+      <p>MIDI path, note count, model name, confidence, warnings.</p>
+    </div>
+    <div class="box k2">
+      <h4><code>beat_tracking</code></h4>
+      <p>Tempo (BPM), beat onsets, optional downbeats, time signature.</p>
+    </div>
+    <div class="box k3">
+      <h4><code>chord_analysis</code></h4>
+      <p>List of <code>ChordEvent(start_sec, end_sec, chord, confidence)</code>.</p>
+    </div>
+    <div class="box k4">
+      <h4><code>analysis</code></h4>
+      <p>Detected key, tempo, structure tags, free-text summary from the
+         music-understanding backend.</p>
+    </div>
+  </div>
+  <p>
+    When a transcription MIDI exists alongside a beat grid, the orchestrator
+    computes <em>deeper</em> per-note feedback through
+    <span class="file">music/<b>feedback.py</b></span>:
+    <code>TimingFeedback</code> aligns onsets to the nearest beat and reports
+    mean drift, early / late counts;
+    <code>PitchFeedback</code> walks the transcribed notes against the chord
+    changes or detected key and tallies in-set vs chromatic. Both helpers
+    return <code>None</code> when inputs are missing &mdash; the coarse
+    tempo-delta summary still runs as a fallback.
+  </p>
+
+  <h3>Phase-3 symbolic workflows</h3>
+  <p>
+    Two adapter-free tools that operate purely on music21 + mido, useful for
+    practice loops where determinism matters more than generative variety:
+  </p>
+  <ul>
+    <li><code>build_backing_track(chord_changes, key, tempo_bpm, bars_per_chord, time_signature)</code>
+        &mdash; writes a piano + acoustic-bass MIDI to the session workspace.
+        Pair with <code>render_midi</code> (<a href="#audio">&sect;10</a>) to land an audio file.
+        Chord symbols normalise through
+        <code>jazz_guru.music.accompaniment.normalize_chord_symbol</code>,
+        which understands <code>BbMaj7</code>, <code>B&#9837;M7</code>,
+        <code>C&triangle;7</code>, <code>F#m7b5</code> and friends.</li>
+    <li><code>generate_exercise(kind, tonic, chord_symbol, mode, octaves, ...)</code>
+        &mdash; emits MusicXML for scale / arpeggio / ii-V-I exercise
+        skeletons. <code>kind=&quot;ii_v_i&quot;</code> writes one Measure
+        per bar with the chord symbol attached to the first measure of each
+        chord.</li>
+  </ul>
+
+  <h3>CLI &amp; agent surface</h3>
+  <p>
+    The pipeline is reachable from both the CLI and the agent loop:
+  </p>
+  <pre><code>jazz-guru analyze-take takes/solo.wav \
+    --chart "Autumn Leaves" \
+    --instrument tenor-sax \
+    --tempo 132 \
+    --key "G minor"</code></pre>
+  <p>
+    The output JSON contains a <code>summary</code> the LLM can paste back
+    to the user verbatim plus the structured sub-objects above. As an
+    agent tool it shows up as <code>analyze_practice_take</code> with the
+    same arguments &mdash; see the music row in
+    <a href="#tools">&sect;4</a>.
+  </p>
+
+  <h3>Adding a new backend</h3>
+  <ol>
+    <li>Create a module under <span class="file">music/analysis/</span> or
+        <span class="file">music/generation/</span>.</li>
+    <li>Inherit from <code>BaseBackend</code>, set the class-level
+        <code>name</code> and <code>install_hint</code>, lazy-import the
+        optional dep inside <code>_probe()</code>.</li>
+    <li>Implement the role's protocol method
+        (<code>transcribe_to_midi</code>, <code>analyze_chords</code>,
+        <code>generate_audio</code>, &hellip;); surface errors via
+        <code>self._unavailable(reason)</code> so they cleanly become
+        orchestrator warnings.</li>
+    <li>Add a branch to the matching selector in
+        <span class="file">music/<b>registry.py</b></span> and to
+        <code>available_backends()</code>.</li>
+    <li>Document the env-var value in <span class="file">.env.example</span>
+        and in <span class="file">docs/<b>music-backends.md</b></span>;
+        mock the dep in tests &mdash; no real model loads in CI.</li>
+  </ol>
+  <p class="cite">
+    Source surface:
+    <span class="file">src/jazz_guru/<b>music/</b></span>
+    (<code>interfaces.py</code>, <code>models.py</code>,
+    <code>registry.py</code>, <code>analyze.py</code>,
+    <code>feedback.py</code>, <code>accompaniment.py</code>,
+    <code>exercises.py</code>, <code>analysis/*</code>,
+    <code>generation/*</code>, <code>notation/*</code>,
+    <code>_compat.py</code>); long-form docs at
+    <span class="file">docs/<b>music-backends.md</b></span>.
+  </p>
+</section>
+
+<!-- ===== 12 CONFIG ===== -->
 <section id="config" class="s">
-  <h2><span class="num">11</span>Configuration sources</h2>
+  <h2><span class="num">12</span>Configuration sources</h2>
   <p class="lede">
     Three loaders, all funnelled through
     <span class="file">src/jazz_guru/<b>config.py</b></span> with an
@@ -1310,9 +1505,9 @@ for name in registry.names():
   </div>
 </section>
 
-<!-- ===== 12 OBSERVABILITY ===== -->
+<!-- ===== 13 OBSERVABILITY ===== -->
 <section id="obs" class="s">
-  <h2><span class="num">12</span>Observability</h2>
+  <h2><span class="num">13</span>Observability</h2>
   <p class="lede">
     Every controller step emits an event. Three subscribers consume the stream:
     a JSONL trace writer, the WebSocket fanout, and the Postgres event log.
@@ -1388,9 +1583,9 @@ for name in registry.names():
   </p>
 </section>
 
-<!-- ===== 13 FS / SANDBOX ===== -->
+<!-- ===== 14 FS / SANDBOX ===== -->
 <section id="fs" class="s">
-  <h2><span class="num">13</span>Filesystem &amp; macOS sandbox</h2>
+  <h2><span class="num">14</span>Filesystem &amp; macOS sandbox</h2>
   <p class="lede">
     The agent's writable footprint is confined to <code>workspace/</code>. On
     macOS, <code>JG_OS_SANDBOX=1</code> wraps subprocesses with
@@ -1486,9 +1681,9 @@ for name in registry.names():
   </div>
 </section>
 
-<!-- ===== 14 SERVER & CLIENTS ===== -->
+<!-- ===== 15 SERVER & CLIENTS ===== -->
 <section id="server" class="s">
-  <h2><span class="num">14</span>Server surface &amp; clients</h2>
+  <h2><span class="num">15</span>Server surface &amp; clients</h2>
   <p class="lede">
     The FastAPI app, the optional <code>X-API-Key</code> middleware, and the
     family of clients that talk to it.
@@ -1582,9 +1777,9 @@ for name in registry.names():
   </ul>
 </section>
 
-<!-- ===== 15 MCP & SUBAGENTS ===== -->
+<!-- ===== 16 MCP & SUBAGENTS ===== -->
 <section id="mcp" class="s">
-  <h2><span class="num">15</span>MCP &amp; subagents</h2>
+  <h2><span class="num">16</span>MCP &amp; subagents</h2>
   <p class="lede">
     Two surfaces the architecture diagram only hints at: Model Context Protocol
     integration for plugging in external tool servers, and
@@ -1629,9 +1824,9 @@ for name in registry.names():
   </p>
 </section>
 
-<!-- ===== 16 REFERENCE ===== -->
+<!-- ===== 17 REFERENCE ===== -->
 <section id="reference" class="s">
-  <h2><span class="num">16</span>Reference</h2>
+  <h2><span class="num">17</span>Reference</h2>
   <p class="lede">A short appendix: pointers back to the most useful source files and configuration files.</p>
 
   <h3>Where to start in the source</h3>
