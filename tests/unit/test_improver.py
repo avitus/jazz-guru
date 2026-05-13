@@ -116,6 +116,42 @@ async def test_locks_when_max_attempts_exceeded() -> None:
         assert out2.status == ImproveStatus.SKIPPED_LOCKED
 
 
+async def test_lock_applied_on_the_attempt_that_crosses_max(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lock flag must flip on the failing attempt itself, not one
+    call later — otherwise policy lags by one improver run."""
+    name = _unique("lockcross")
+    async with _tool(name):
+        await tool_test_add(
+            name=name,
+            case_name="strict",
+            case_spec={"case": {"input": {}, "predicate": {"result.ok": True}}},
+        )
+        # Pre-seed so the next failed attempt is the MAX_ATTEMPTS-th in a row.
+        await _set_meta(name, consecutive_failures=MAX_ATTEMPTS - 1)
+        # Proposal regresses the tool, so this run fails tests.
+        _stub_complete(
+            monkeypatch,
+            json.dumps(
+                {
+                    "source": "def run(**kwargs):\n    return {'ok': False}\n",
+                    "rationale": "",
+                    "new_test_cases": [],
+                    "schema_unchanged": True,
+                }
+            ),
+        )
+        out = await maybe_improve(name, [FailureRecord(tool_name=name, error="e")])
+        assert out.status == ImproveStatus.TESTS_FAILED
+        # improve_locked should be set on this same run, not the next.
+        async with session_scope() as s:
+            tool = (
+                await s.execute(select(GeneratedTool).where(GeneratedTool.name == name))
+            ).scalar_one()
+            assert (tool.meta or {}).get("improve_locked") is True
+
+
 # ---------------------------------------------------- proposal failure modes
 
 

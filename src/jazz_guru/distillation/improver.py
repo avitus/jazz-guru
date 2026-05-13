@@ -187,6 +187,17 @@ async def _set_locked(name: str, reason: str) -> None:
         tool.meta = meta
 
 
+async def _record_failure(name: str) -> int:
+    """Bump the failure counter and flip ``improve_locked`` if we crossed
+    ``MAX_ATTEMPTS`` — so the lock state matches policy immediately, not
+    one attempt later.
+    """
+    attempts = await _bump_consecutive_failures(name)
+    if attempts >= MAX_ATTEMPTS:
+        await _set_locked(name, reason="max_attempts")
+    return attempts
+
+
 async def _reset_failures(name: str) -> None:
     async with session_scope() as s:
         tool = (
@@ -320,7 +331,7 @@ async def maybe_improve(
 
     proposal = await _propose_patch(spec, tests, failures)
     if proposal is None:
-        await _bump_consecutive_failures(name)
+        await _record_failure(name)
         return ImproveOutcome(status=ImproveStatus.PROPOSE_FAILED, tool_name=name)
 
     # Validate source structurally before paying for a full test run.
@@ -328,7 +339,7 @@ async def maybe_improve(
         validate_source(proposal["source"])
     except Exception as e:
         log.info("improver.proposal_invalid_source", tool=name, err=str(e))
-        await _bump_consecutive_failures(name)
+        await _record_failure(name)
         return ImproveOutcome(
             status=ImproveStatus.PROPOSE_FAILED, tool_name=name, failures=[str(e)]
         )
@@ -337,7 +348,7 @@ async def maybe_improve(
     if new_sha == spec.sha256:
         # No-op proposal — model just echoed back the source. Don't burn
         # cycles testing it; treat as a soft failure.
-        await _bump_consecutive_failures(name)
+        await _record_failure(name)
         return ImproveOutcome(status=ImproveStatus.NO_OP, tool_name=name)
 
     new_cases = _derive_test_cases(failures, proposal)
@@ -355,16 +366,28 @@ async def maybe_improve(
         version=spec.version,
         meta=spec.meta,
     )
-    suite: list[TestCase] = [TestCase.from_spec(t.name, t.spec or {}) for t in tests]
-    for case_name, case_spec in new_cases:
-        suite.append(TestCase.from_spec(case_name, case_spec))
+    # Building the suite can raise on a malformed LLM-proposed case spec
+    # (bad ``input`` shape, missing keys, etc.). Treat that as a proposal
+    # failure rather than letting it propagate out of ``maybe_improve``.
+    try:
+        suite: list[TestCase] = [TestCase.from_spec(t.name, t.spec or {}) for t in tests]
+        for case_name, case_spec in new_cases:
+            suite.append(TestCase.from_spec(case_name, case_spec))
+    except (TypeError, ValueError, KeyError) as e:
+        log.info("improver.proposal_invalid_test_case", tool=name, err=str(e))
+        await _record_failure(name)
+        return ImproveOutcome(
+            status=ImproveStatus.PROPOSE_FAILED,
+            tool_name=name,
+            failures=[f"invalid test case: {e}"],
+        )
 
     results = await run_all(candidate, suite)
     n_pass = sum(1 for r in results if r.passed)
     n_fail = len(results) - n_pass
 
     if n_fail > 0:
-        await _bump_consecutive_failures(name)
+        await _record_failure(name)
         return ImproveOutcome(
             status=ImproveStatus.TESTS_FAILED,
             tool_name=name,
