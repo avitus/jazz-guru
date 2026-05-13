@@ -1,6 +1,6 @@
 # Tier-2 dynamic tools: tests + self-improvement
 
-**Status:** Proposed (not started)
+**Status:** In progress (PR 1 complete)
 **Owner:** @avitus
 **Drafted:** 2026-05-12
 **Target tier:** Tier 2 (`generated_tools` table). Tier 1 already supports iteration via `tool_create` replacement; Tier 3 is deliberately out of scope (manual review floor).
