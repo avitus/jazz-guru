@@ -1,8 +1,9 @@
 # Tier-2 dynamic tools: tests + self-improvement
 
-**Status:** Proposed (not started)
+**Status:** Done (all 8 PRs landed on dev-macbook)
 **Owner:** @avitus
 **Drafted:** 2026-05-12
+**Implemented:** 2026-05-12 — 2026-05-13
 **Target tier:** Tier 2 (`generated_tools` table). Tier 1 already supports iteration via `tool_create` replacement; Tier 3 is deliberately out of scope (manual review floor).
 
 ## Why
@@ -356,7 +357,7 @@ _Update this section as PRs land. Use the table below to track state. The "Notes
 | 5. Failure-signal extractor | Done | `testing/failure_signals.py` mines trace JSONL for three failure modes: handler-raised (`ok: False`), policy denial (`error` without `ok`), and dynamic-tool subprocess errors (`result_has_error`). Small `ActionController` change to emit `result_has_error` + `error_excerpt` when a tool returns `{"__error__": ...}` — previously these slipped through as `ok: True`. 13 tests; pure trace parsing, no DB. |
 | 6. Improver module + gate | Done | `distillation/improver.maybe_improve(name, failures)`. One LLM call returns `{source, rationale, new_test_cases, schema_unchanged}` — full suite + new cases run against the candidate, only all-green proposals commit via `store.upsert(origin="improver")`. Sha-equal proposals → `NO_OP`; `schema_unchanged=False` → rejected without running tests; invalid Python → rejected by `validate_source`. Lock breakers: `consecutive_failures` counter → `improve_locked=True` after `MAX_ATTEMPTS=3`. 11 tests with stubbed `llm.complete`. |
 | 7. Reflexion wiring + breakers + telemetry | Done | `reflexion._run_improvement_pass(sid)` mines the session trace, dispatches `maybe_improve` per tool that crossed `jg_improver_threshold` (per-tool override via `meta.improve_threshold`), capped by `jg_improver_max_per_run`. New `EventType` values `TOOL_IMPROVE_PROPOSED/PASSED/FAILED` + `TOOL_ROLLBACK` (rollback emit deferred to natural call site in store). `jazz-guru tool unlock` CLI clears `improve_locked` and resets the counter. 8 new tests (6 wiring + 2 CLI). Viewer-side filter deferred — UI polish, not blocking. |
-| 8. Docs | Not started | |
+| 8. Docs | Done | `CLAUDE.md` updated with the new `testing/` package, the `distillation/improver.py` description, the extended `state/` model list, and the `jazz-guru tool ...` CLI block. Tool-creation hint in `context/builder.py` was extended in PR 4 already. |
 
 ## Open questions deferred
 
