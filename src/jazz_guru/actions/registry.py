@@ -169,6 +169,7 @@ def register_all() -> ToolRegistry:
         music_xml,
         notes,
         patch,
+        practice,
         presets,
         process,
         python_exec,

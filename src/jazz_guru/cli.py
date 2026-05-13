@@ -168,6 +168,42 @@ def viewer(host: str = "127.0.0.1", port: int = 8765) -> None:
     uvicorn.run("jazz_guru.logging.viewer.app:app", host=host, port=port)
 
 
+@app.command("analyze-take")
+def analyze_take(
+    audio_path: str = typer.Argument(..., help="Audio file (.wav/.flac/.m4a/.mp3)."),
+    chart: str = typer.Option(None, "--chart", help="Chart/tune name."),
+    instrument: str = typer.Option(None, "--instrument", help="Performer's instrument, e.g. tenor-sax."),
+    lead_sheet: str = typer.Option(None, "--lead-sheet", help="Optional lead-sheet path."),
+    expected_key: str = typer.Option(None, "--key", help="Chart key, e.g. 'G minor'."),
+    expected_tempo: float = typer.Option(None, "--tempo", help="Chart tempo (BPM)."),
+) -> None:
+    """Run the music-backend pipeline against a practice take and print feedback."""
+    from jazz_guru.music import analyze_practice_take, available_backends
+
+    async def _run() -> dict[str, object]:
+        feedback = await analyze_practice_take(
+            Path(audio_path),
+            chart=chart,
+            instrument=instrument,
+            lead_sheet_path=Path(lead_sheet) if lead_sheet else None,
+            expected_key=expected_key,
+            expected_tempo_bpm=expected_tempo,
+        )
+        return feedback.model_dump(exclude_none=True, mode="json")
+
+    out = asyncio.run(_run())
+    console.print(Panel.fit(json.dumps(out, indent=2, default=str), title="analyze-take"))
+
+    backends = available_backends()
+    table = Table(title="music backends")
+    table.add_column("name")
+    table.add_column("available")
+    table.add_column("install hint")
+    for name, row in backends.items():
+        table.add_row(name, "yes" if row.get("available") else "no", str(row.get("install_hint") or "-"))
+    console.print(table)
+
+
 @app.command()
 def tui(
     server: str = typer.Option("http://127.0.0.1:8000", "--server", "-S", help="Server base URL."),

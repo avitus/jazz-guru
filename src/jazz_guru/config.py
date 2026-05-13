@@ -175,6 +175,16 @@ class Settings(BaseSettings):
     # Music / audio
     fluidsynth_soundfont: str = ""
 
+    # Music backend selection (see jazz_guru.music.registry). All optional —
+    # "none" disables the role; "librosa" is the always-available baseline
+    # for beat / understanding. Specialised backends (basic_pitch, omnizart,
+    # mt3, music_flamingo, magenta_rt, elevenlabs_music) lazy-import their
+    # dependency and degrade gracefully when it is not installed.
+    music_transcription_backend: str = "none"
+    music_analysis_backend: str = "librosa"
+    music_understanding_backend: str = "none"
+    music_generation_backend: str = "none"
+
     # Feature flags
     feature_tts: int = 0
     feature_audio_ml: int = 0
