@@ -160,7 +160,16 @@ class MagentaRealtimeBackend(BaseBackend):
                 f"invalid JG_MAGENTA_RT_CLI shell quoting ({exc}); "
                 "falling back to the python backend"
             )
-        if cli_argv and shutil.which(cli_argv[0]):
+        cli_bin = shutil.which(cli_argv[0]) if cli_argv else None
+        if cli and cli_argv and not cli_bin:
+            # Same rationale as MT3: a configured-but-missing CLI silently
+            # falling back to python is the operator-confusion bug; emit a
+            # warning so the trace shows the misconfiguration.
+            warnings.append(
+                f"JG_MAGENTA_RT_CLI executable not found on PATH ({cli_argv[0]}); "
+                "falling back to the python backend"
+            )
+        if cli_bin:
             # See note in MT3Backend.transcribe_to_midi — the helper avoids
             # ``RuntimeError: asyncio.run() cannot be called from a running
             # event loop`` if a caller invokes this from async context.

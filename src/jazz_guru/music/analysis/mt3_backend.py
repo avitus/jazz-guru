@@ -166,7 +166,17 @@ class MT3Backend(BaseBackend):
                 f"invalid JG_MT3_CLI shell quoting ({exc}); "
                 "falling back to the python backend"
             )
-        if cli_argv and shutil.which(cli_argv[0]):
+        cli_bin = shutil.which(cli_argv[0]) if cli_argv else None
+        if cli and cli_argv and not cli_bin:
+            # Surface this misconfiguration so the LLM (and the operator
+            # reading the trace) sees that the CLI was requested but
+            # silently skipped, rather than wondering why the python
+            # fallback ran when JG_MT3_CLI was set.
+            warnings.append(
+                f"JG_MT3_CLI executable not found on PATH ({cli_argv[0]}); "
+                "falling back to the python backend"
+            )
+        if cli_bin:
             # ``transcribe_to_midi`` is part of a sync protocol but may be
             # called from inside an event loop (agent tools / tests). Use
             # the compat helper so we never collide with a running loop.
