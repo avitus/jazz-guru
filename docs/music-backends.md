@@ -63,8 +63,17 @@ unlocks the next layer of the practice-take pipeline.
    Configure the HF model id with `MUSIC_FLAMINGO_MODEL`
    (default: `nvidia/audio-flamingo-3-hf`; use the `-chat` variant for
    the instruction-tuned model).
-5. **Magenta RealTime** or **ElevenLabs Music** — optional generation
-   for backing tracks and exercises. Wire-up lands in Phase 3.
+5. **Magenta RealTime** — local real-time music generation. Like MT3,
+   no stable Python API; the adapter supports either a CLI subprocess
+   (`JG_MAGENTA_RT_CLI=<path-to-wrapper>`) or an `import magenta_rt`
+   path.
+6. **ElevenLabs Music** — hosted music generation.
+   ```bash
+   pip install elevenlabs
+   # then set ELEVENLABS_API_KEY in .env
+   ```
+   The default model id is `music_v1`; override with
+   `ELEVENLABS_MUSIC_MODEL`.
 
 ## Configuration
 
@@ -153,6 +162,13 @@ The same workflow is exposed to the agent itself as the
   `AudioFlamingo3ForConditionalGeneration` + `AutoProcessor` via
   `transformers`, applies the chat template, and scrapes
   key/tempo/time-signature out of the free-text reply.
-* **Phase 3** — generation backends (Magenta RT, ElevenLabs Music),
-  backing-track workflows, onset-level timing feedback, per-note
-  intonation drift, MusicXML exercise generation.
+* **Phase 3 (this PR)** — real Magenta RealTime + ElevenLabs Music
+  generation adapters; deterministic backing-track builder
+  (`build_backing_track` tool) that turns a chord progression into a
+  piano + bass MIDI via music21; MusicXML exercise generator
+  (`generate_exercise` tool) for scales, arpeggios, and ii-V-I
+  skeletons; per-note timing & pitch feedback when a transcription is
+  available (onset-to-beat drift, in-scale vs chromatic tally); new
+  `generate_music` agent tool that delegates to the configured
+  generation backend. Robust chord-symbol normaliser (`BbMaj7`, `B♭M7`,
+  `C△7` → music21-compatible `B-maj7` / `Cmaj7`).

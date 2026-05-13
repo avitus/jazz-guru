@@ -28,6 +28,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from jazz_guru.music.errors import BackendUnavailableError
+from jazz_guru.music.feedback import compute_pitch_feedback, compute_timing_feedback
 from jazz_guru.music.models import (
     BeatTrackingResult,
     ChordAnalysisResult,
@@ -288,6 +289,36 @@ async def analyze_practice_take(
     if chord_changes and leadsheet is None:
         leadsheet = LeadSheet(chord_changes=list(chord_changes))
 
+    # Coarse timing/pitch summaries (always run, even without a transcription).
+    coarse_timing = _timing_feedback(beats_result, context)
+    coarse_pitch = _pitch_feedback(analysis_result, leadsheet, context)
+
+    # Deeper, per-note feedback when a transcription MIDI is available.
+    transcription_midi = (
+        transcription_result.midi_path if transcription_result else None
+    )
+    deep_timing: TimingFeedback | None = None
+    deep_pitch: PitchFeedback | None = None
+    if transcription_midi is not None:
+        deep_timing = compute_timing_feedback(
+            transcription_midi, beats_result, context=context
+        )
+        # Prefer chord changes from the user > the loaded leadsheet > detected key.
+        chord_changes_for_pitch: list[str] | None = chord_changes
+        if (
+            chord_changes_for_pitch is None
+            and leadsheet is not None
+            and leadsheet.chord_changes
+        ):
+            chord_changes_for_pitch = list(leadsheet.chord_changes)
+        detected_key = analysis_result.detected_key if analysis_result else None
+        deep_pitch = compute_pitch_feedback(
+            transcription_midi,
+            detected_key=detected_key,
+            chord_changes=chord_changes_for_pitch,
+            context=context,
+        )
+
     feedback = PracticeFeedback(
         audio_path=audio_path,
         context=context,
@@ -295,8 +326,8 @@ async def analyze_practice_take(
         analysis=analysis_result,
         chord_analysis=chord_result,
         beat_tracking=beats_result,
-        timing=_timing_feedback(beats_result, context),
-        pitch=_pitch_feedback(analysis_result, leadsheet, context),
+        timing=deep_timing or coarse_timing,
+        pitch=deep_pitch or coarse_pitch,
         warnings=warnings,
     )
     feedback.summary = _summarise(feedback)

@@ -18,6 +18,9 @@ tools:
   vision:         { mode: allow }
   audio_analyze:  { mode: allow }
   analyze_practice_take: { mode: allow }
+  build_backing_track:  { mode: allow }
+  generate_exercise:    { mode: allow }
+  generate_music:       { mode: allow }
   music_xml:      { mode: allow }
   midi:           { mode: allow }
   render_midi:    { mode: allow }
@@ -61,7 +64,7 @@ toolsets:
   shell:   { tools: [shell, python_exec], mode: allow }
   web:     { tools: [http_get, http_post, web_search], mode: allow }
   code:    { tools: [code_gen], mode: allow }
-  music:   { tools: [music_xml, midi, render_midi, preset_list, preset_get, preset_upsert, preset_delete], mode: allow }
+  music:   { tools: [music_xml, midi, render_midi, preset_list, preset_get, preset_upsert, preset_delete, build_backing_track, generate_exercise, generate_music], mode: allow }
   audio:   { tools: [audio_analyze, tts, analyze_practice_take], mode: allow }
   vision:  { tools: [vision], mode: allow }
   meta:    { tools: [tool_create, tool_publish, tool_remove, tool_promote_to_source, tool_list_dynamic, tool_inspect], mode: allow }

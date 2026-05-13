@@ -197,6 +197,13 @@ class Settings(BaseSettings):
         "Be concise but specific."
     )
     music_flamingo_max_new_tokens: int = 256
+    # Magenta RealTime: same CLI/python dual-path as MT3. The CLI must
+    # accept `--prompt <text> --duration <sec> --output <wav>`.
+    jg_magenta_rt_cli: str = ""
+    # ElevenLabs Music: hosted music generation. ELEVENLABS_API_KEY is
+    # required; ELEVENLABS_MUSIC_MODEL pins a specific model id.
+    elevenlabs_api_key: str = ""
+    elevenlabs_music_model: str = "music_v1"
 
     # Feature flags
     feature_tts: int = 0

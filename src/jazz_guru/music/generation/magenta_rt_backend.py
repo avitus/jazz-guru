@@ -1,26 +1,159 @@
-"""Magenta RealTime backend (placeholder).
+"""Magenta RealTime adapter.
 
-Magenta RealTime is the recommended on-device generation backend. This
-stub conforms to :class:`~jazz_guru.music.interfaces.MusicGenerationBackend`
-so the rest of the layer can already reference it; the actual
-implementation is Phase 3 work (likely wrapping the ``magenta-realtime``
-CLI/SDK or a local model checkpoint).
+`Magenta RealTime <https://github.com/magenta/magenta-realtime>`_ is
+research-grade and (like MT3) does not ship a stable pip API. The
+adapter therefore supports two invocation paths and falls back to
+:class:`BackendUnavailableError` when neither works:
+
+1. **CLI subprocess.** If ``JG_MAGENTA_RT_CLI`` is set, the adapter
+   shells out to it as
+   ``<cli> --prompt <text> --duration <sec> --output <wav>``.
+2. **Python module.** If the ``magenta_rt`` package imports cleanly,
+   the adapter calls ``magenta_rt.compose(prompt=..., duration_sec=..., output=...)``
+   and tolerates a few signature variants.
+
+The generated WAV lands at ``request.output_path`` (or under
+``<workspace>/generation/<timestamp>.wav`` when the caller didn't pin
+one). All paths are honored verbatim — the orchestrator/tool layer is
+responsible for sandboxing.
 """
 from __future__ import annotations
 
+import asyncio
+import shutil
+import time
+from pathlib import Path
+
+from jazz_guru.config import get_settings
 from jazz_guru.music.interfaces import BaseBackend
 from jazz_guru.music.models import MusicGenerationRequest, MusicGenerationResult
 
 
 class MagentaRealtimeBackend(BaseBackend):
-    """Stub adapter. Always raises until Phase 3."""
+    """Audio generation via Magenta RealTime."""
 
     name: str = "magenta_rt"
-    install_hint: str | None = "pending — Phase 3 wiring"
+    install_hint: str | None = (
+        "see https://github.com/magenta/magenta-realtime; then either set "
+        "JG_MAGENTA_RT_CLI=<path-to-cli> or `pip install -e .` the upstream "
+        "repo so `magenta_rt` imports cleanly"
+    )
 
     @classmethod
-    def _probe(cls) -> None:
-        import magenta_realtime  # type: ignore[import-not-found]  # noqa: F401
+    def _probe(cls) -> bool:  # type: ignore[override]
+        cli = get_settings().jg_magenta_rt_cli.strip()
+        if cli and shutil.which(cli.split()[0]):
+            return True
+        try:
+            import magenta_rt  # type: ignore[import-not-found]  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    @classmethod
+    def is_available(cls) -> bool:  # override base
+        try:
+            return cls._probe()
+        except Exception:  # pragma: no cover - defensive
+            return False
+
+    # ------------------------------------------------------------------
+    # invocation paths
+    # ------------------------------------------------------------------
+
+    async def _run_cli(
+        self, cli: str, request: MusicGenerationRequest, output_path: Path
+    ) -> tuple[int, str]:
+        argv = [
+            *cli.split(),
+            "--prompt",
+            request.prompt,
+            "--duration",
+            str(request.duration_sec),
+            "--output",
+            str(output_path),
+        ]
+        if request.seed is not None:
+            argv += ["--seed", str(request.seed)]
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await proc.communicate()
+        return proc.returncode or 0, err.decode("utf-8", errors="replace")
+
+    def _run_python(
+        self, request: MusicGenerationRequest, output_path: Path
+    ) -> None:
+        """Call ``magenta_rt.compose``; raises on failure. Monkeypatched in tests."""
+        from magenta_rt import compose  # type: ignore[import-not-found]
+
+        try:
+            compose(
+                prompt=request.prompt,
+                duration_sec=request.duration_sec,
+                output=str(output_path),
+                seed=request.seed,
+            )
+        except TypeError:
+            # Older signature variant.
+            compose(request.prompt, str(output_path), request.duration_sec)
+
+    # ------------------------------------------------------------------
+    # public protocol method
+    # ------------------------------------------------------------------
+
+    def _default_output(self) -> Path:
+        # Generation outputs sit under <workspace>/generation/<timestamp>.wav
+        # by default. The tool layer can pin a session-scoped path via
+        # ``MusicGenerationRequest.output_path``.
+        s = get_settings()
+        ts = int(time.time() * 1000)
+        out_dir = s.jg_workspace_dir / "generation"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return out_dir / f"magenta_rt_{ts}.wav"
 
     def generate_audio(self, request: MusicGenerationRequest) -> MusicGenerationResult:
-        raise self._unavailable("Magenta RealTime adapter is a Phase 3 stub")
+        if not self.is_available():
+            raise self._unavailable(
+                "neither JG_MAGENTA_RT_CLI nor the `magenta_rt` python package is available"
+            )
+
+        output_path = Path(request.output_path) if request.output_path else self._default_output()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        warnings: list[str] = []
+
+        cli = get_settings().jg_magenta_rt_cli.strip()
+        if cli and shutil.which(cli.split()[0]):
+            rc, err = asyncio.run(self._run_cli(cli, request, output_path))
+            if rc != 0:
+                return MusicGenerationResult(
+                    backend=self.name,
+                    output_path=output_path,
+                    duration_sec=0.0,
+                    warnings=[f"magenta-rt CLI exit {rc}: {err.strip()[:400]}"],
+                )
+            model_name = f"magenta_rt cli ({cli.split()[0]})"
+        else:
+            try:
+                self._run_python(request, output_path)
+            except Exception as exc:  # pragma: no cover - depends on optional dep
+                return MusicGenerationResult(
+                    backend=self.name,
+                    output_path=output_path,
+                    duration_sec=0.0,
+                    warnings=[f"magenta_rt.compose failed: {exc}"],
+                )
+            model_name = "magenta_rt (python)"
+
+        if not output_path.exists():
+            warnings.append(f"backend did not write {output_path}")
+
+        return MusicGenerationResult(
+            backend=self.name,
+            output_path=output_path,
+            duration_sec=request.duration_sec,
+            model_name=model_name,
+            warnings=warnings,
+        )

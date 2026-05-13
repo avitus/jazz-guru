@@ -166,6 +166,7 @@ def register_all() -> ToolRegistry:
         fs,
         http,
         midi,
+        music_workflows,
         music_xml,
         notes,
         patch,
