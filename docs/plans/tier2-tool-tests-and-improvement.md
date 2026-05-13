@@ -351,7 +351,7 @@ _Update this section as PRs land. Use the table below to track state. The "Notes
 |----|--------|-------|
 | 1. Migration + ORM | Done | Revision `0003_tool_versions_tests.py`. Three tables: `generated_tool_versions`, `generated_tool_tests`, `generated_tool_test_runs`. Up/down/re-up cycle verified against local Postgres. 7 schema-pinning tests in `tests/unit/test_tool_versions_schema.py`. |
 | 2. `store` versioning + rollback | Done | `store.upsert` snapshots the prior row into `generated_tool_versions` before mutating, with `origin`/`rationale` propagated for audit. Added `list_versions`, `get_version`, `list_tests`, `rollback` (forward in version space — see §B.6). 15 round-trip tests under real Postgres. Added `tests/unit/conftest.py` to dispose the cached async engine per test (asyncpg + pytest-asyncio loop boundary). |
-| 3. Predicate DSL | Not started | |
+| 3. Predicate DSL | Done | `src/jazz_guru/testing/predicates.py`. Operators: eq, ne, gt/gte/lt/lte, len (scalar or nested), contains, regex, type, absent, present, all, any. Path syntax with dots, `[N]`, and `[*]` quantifier (single or nested). Bare scalar = implicit eq. Pure logic, no `eval`. 76 unit tests covering operators, path parsing, quantifier expansion, missing-value semantics, and error cases. |
 | 4. Runner + meta-tools + CLI + smoke recording | Not started | |
 | 5. Failure-signal extractor | Not started | |
 | 6. Improver module + gate | Not started | |
