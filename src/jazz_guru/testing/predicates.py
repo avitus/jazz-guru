@@ -277,6 +277,14 @@ def _op_type(actual: Any, expected: Any) -> PredicateResult:
         return PredicateResult(
             False, [f"expected type bool, got {type(actual).__name__}"]
         )
+    # Tuple targets (e.g. ``"number"`` → ``(int, float)``) bypass the
+    # ``target is int`` guard above, so apply the bool-rejection here too.
+    # Without this, ``type: "number"`` accepts ``True``/``False`` because
+    # ``isinstance(True, (int, float))`` is True.
+    if isinstance(target, tuple) and int in target and isinstance(actual, bool):
+        return PredicateResult(
+            False, [f"expected type {expected}, got {type(actual).__name__}"]
+        )
     if isinstance(actual, target):
         return PredicateResult(True)
     return PredicateResult(
@@ -364,10 +372,20 @@ def _check_op(actual: Any, expectation: Any) -> PredicateResult:
     ``absent`` / ``present``; everything else fails fast with a clear
     message rather than letting NoneType-like comparisons leak through.
     """
+    # Operator validation runs FIRST for dict expectations — independent of
+    # whether the path resolved — so a typo'd op like ``{absent: True,
+    # typoed: 1}`` surfaces as a malformed-predicate error rather than
+    # being silently dropped on the missing-path branch below.
+    if isinstance(expectation, dict):
+        for op_name in expectation:
+            if op_name not in _OPS:
+                raise PredicateError(f"unknown operator {op_name!r}")
+
     if actual is _MISSING:
         if isinstance(expectation, dict):
             # Only absent/present can meaningfully consume a missing value;
-            # fall through so those ops run while everything else fails.
+            # everything else fails the clause because the value isn't there
+            # to evaluate against.
             relevant = {k: v for k, v in expectation.items() if k in ("absent", "present")}
             if not relevant:
                 return PredicateResult(
@@ -387,8 +405,6 @@ def _check_op(actual: Any, expectation: Any) -> PredicateResult:
 
     failures = []
     for op_name, arg in expectation.items():
-        if op_name not in _OPS:
-            raise PredicateError(f"unknown operator {op_name!r}")
         r = _OPS[op_name](actual, arg)
         if not r.passed:
             failures.extend(r.failures)

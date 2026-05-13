@@ -223,6 +223,9 @@ def test_regex_invalid_pattern_raises() -> None:
         (1, "number", True),
         (1.5, "number", True),
         ("x", "number", False),
+        # bool is a subclass of int; tuple targets must reject it too.
+        (True, "number", False),
+        (False, "number", False),
         (True, "bool", True),
         (1, "bool", False),  # int != bool
         ([1, 2], "array", True),
@@ -398,6 +401,13 @@ def test_combined_ops_in_one_clause_are_anded() -> None:
 def test_unknown_operator_raises() -> None:
     with pytest.raises(PredicateError):
         evaluate({"x": 1}, {"x": {"is_prime": True}})
+
+
+def test_unknown_operator_raises_even_on_missing_path() -> None:
+    """A typo'd op alongside ``absent: True`` should still raise — silently
+    dropping unknown keys would mask predicate-authoring bugs."""
+    with pytest.raises(PredicateError):
+        evaluate({}, {"missing": {"absent": True, "typoed_op": 1}})
 
 
 def test_predicate_must_be_dict() -> None:

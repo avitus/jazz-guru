@@ -226,13 +226,12 @@ async def test_list_versions_unknown_tool_returns_empty() -> None:
     assert await store.list_versions("_t_no_such_tool") == []
 
 
-@pytest.mark.parametrize("ver_payload", [42, "two", -1])
+@pytest.mark.parametrize("ver_payload", [42, -1])
 async def test_get_version_handles_missing_version_types_gracefully(
-    ver_payload: Any,
+    ver_payload: int,
 ) -> None:
-    """Defensive: get_version with weird ints (negative, huge) returns None,
-    not an exception. String/non-int types are caller bugs and may raise."""
+    """Defensive: ``get_version`` returns None for missing integer versions
+    (both positive and negative) rather than raising."""
     name = _unique("typecheck")
     async with _tool(name):
-        if isinstance(ver_payload, int):
-            assert await store.get_version(name, ver_payload) is None
+        assert await store.get_version(name, ver_payload) is None

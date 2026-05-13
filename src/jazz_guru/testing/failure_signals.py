@@ -46,15 +46,24 @@ def _load_records_from_path(p: Path) -> list[dict[str, Any]]:
     if not p.exists():
         return []
     out: list[dict[str, Any]] = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(rec, dict):
-            out.append(rec)
+    # Stream line-by-line so a giant trace doesn't materialize fully in
+    # memory, and harden against IO / encoding failures — an unreadable
+    # trace file shouldn't prevent the improvement loop from running on
+    # other tools.
+    try:
+        with p.open("r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(rec, dict):
+                    out.append(rec)
+    except (OSError, UnicodeDecodeError):
+        return []
     return out
 
 

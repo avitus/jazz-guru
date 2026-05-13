@@ -290,7 +290,11 @@ async def tool_test_run(
                     tool_version=spec.version,
                     test_id=test_row.id,
                     passed=r.passed,
-                    output=r.output if isinstance(r.output, dict) else None,
+                    # ``output`` is a JSON column — any JSON-serializable
+                    # shape is fine. Don't drop non-dict outputs (lists,
+                    # scalars, None), since the audit log is more useful
+                    # if it captures whatever the tool actually returned.
+                    output=r.output,
                     error=r.error,
                     ms=r.ms,
                     judge_score=r.judge_score,

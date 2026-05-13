@@ -189,6 +189,15 @@ def cmd_diff(
     """
 
     async def _run_async() -> int:
+        # Validate v1 exists upfront — both the v1==v2 short-circuit and the
+        # rest of the function need it to be a real snapshot. Without this
+        # check, ``tool diff foo 99 99`` would print "nothing to diff" and
+        # exit 0 even though version 99 doesn't exist.
+        row_a = await store.get_version(name, v1)
+        if row_a is None:
+            console.print(f"[red]no version {v1} for {name!r}[/red]")
+            return 1
+
         if v2 not in (0, v1):
             row_b = await store.get_version(name, v2)
             if row_b is None:
@@ -210,10 +219,6 @@ def cmd_diff(
             b_label = f"v{tool.version} (current)"
             b_source = tool.source
 
-        row_a = await store.get_version(name, v1)
-        if row_a is None:
-            console.print(f"[red]no version {v1} for {name!r}[/red]")
-            return 1
         diff = "".join(
             difflib.unified_diff(
                 row_a.source.splitlines(keepends=True),

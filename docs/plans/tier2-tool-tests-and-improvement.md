@@ -1,6 +1,6 @@
 # Tier-2 dynamic tools: tests + self-improvement
 
-**Status:** Done (all 8 PRs landed on dev-macbook)
+**Status:** Done (all 8 PRs merged)
 **Owner:** @avitus
 **Drafted:** 2026-05-12
 **Implemented:** 2026-05-12 — 2026-05-13
@@ -103,7 +103,7 @@ AND-semantics: if both predicate and rubric exist, both must pass. Pure-predicat
 
 Small, deterministic, no `eval`. JSONPath subset: dot, `[N]`, `[*]`.
 
-```
+```text
 eq, ne                         # equality (bare scalar = implicit eq)
 len: int | {gt/lt/gte/lte: int}
 gt, gte, lt, lte
@@ -151,7 +151,7 @@ Tagged `origin="smoke_recorded"`. Always included in subsequent improvement gate
 
 ### A.7 CLI surface (`jazz-guru tool ...`)
 
-```
+```bash
 jazz-guru tool list                  # all Tier-2 tools, version, test count, last-run summary
 jazz-guru tool show <name>           # source, schema, tests, version history
 jazz-guru tool test <name>           # run suite, print results table
@@ -239,7 +239,7 @@ async def maybe_improve(name: str, failures: list[FailureRecord]) -> ImproveOutc
 
 One `llm.complete` call. Strict-JSON contract like reflexion:
 
-```
+```json
 {
   "source": "...",
   "rationale": "...",
@@ -267,7 +267,7 @@ All must hold:
 
 Single async transaction:
 
-```
+```sql
 INSERT old row → generated_tool_versions (origin="improver_superseded")
 UPDATE generated_tools SET source/sha256/schema/description/version+1
 INSERT new_test_cases → generated_tool_tests (origin="improver_added")

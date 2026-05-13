@@ -103,7 +103,23 @@ async def run_test_case(
     """
     start = time.perf_counter()
     try:
-        output = await invoke(spec, case.input)
+        if case.timeout_sec is not None and case.timeout_sec > 0:
+            output = await asyncio.wait_for(
+                invoke(spec, case.input), timeout=case.timeout_sec
+            )
+        else:
+            output = await invoke(spec, case.input)
+    except TimeoutError:
+        ms = int((time.perf_counter() - start) * 1000)
+        err = f"timeout after {case.timeout_sec}s"
+        return TestRunResult(
+            case_name=case.name,
+            passed=False,
+            output=None,
+            error=err,
+            ms=ms,
+            failures=[err],
+        )
     except Exception as e:
         return TestRunResult(
             case_name=case.name,
@@ -180,8 +196,10 @@ async def run_all(
 
     Results come back in input order (asyncio.gather preserves order),
     not completion order, so callers can pair them with the input list.
+    ``concurrency`` is clamped to >=1 — a 0 / negative value would
+    deadlock on the semaphore.
     """
-    sem = asyncio.Semaphore(concurrency)
+    sem = asyncio.Semaphore(max(1, concurrency))
 
     async def _bounded(c: TestCase) -> TestRunResult:
         async with sem:
