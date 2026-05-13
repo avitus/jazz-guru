@@ -20,6 +20,7 @@ responsible for sandboxing.
 from __future__ import annotations
 
 import asyncio
+import shlex
 import shutil
 import time
 from pathlib import Path
@@ -28,6 +29,10 @@ from jazz_guru.config import get_settings
 from jazz_guru.music._compat import run_coro_sync
 from jazz_guru.music.interfaces import BaseBackend
 from jazz_guru.music.models import MusicGenerationRequest, MusicGenerationResult
+
+# Hard cap on the external CLI so a hung magenta-rt invocation can't
+# wedge the agent loop. Five minutes is generous for typical 30s clips.
+_DEFAULT_CLI_TIMEOUT_SEC = 300.0
 
 
 class MagentaRealtimeBackend(BaseBackend):
@@ -43,7 +48,10 @@ class MagentaRealtimeBackend(BaseBackend):
     @classmethod
     def _probe(cls) -> bool:  # type: ignore[override]
         cli = get_settings().jg_magenta_rt_cli.strip()
-        if cli and shutil.which(cli.split()[0]):
+        # shlex.split tolerates quoted paths with spaces; plain str.split
+        # would shred `"/opt/Magenta RT/bin/magenta-rt"`.
+        cli_argv = shlex.split(cli) if cli else []
+        if cli_argv and shutil.which(cli_argv[0]):
             return True
         try:
             import magenta_rt  # type: ignore[import-not-found]  # noqa: F401
@@ -65,8 +73,14 @@ class MagentaRealtimeBackend(BaseBackend):
     async def _run_cli(
         self, cli: str, request: MusicGenerationRequest, output_path: Path
     ) -> tuple[int, str]:
+        """Shell out to a user-configured magenta-rt CLI.
+
+        Bounded by ``_DEFAULT_CLI_TIMEOUT_SEC``; on timeout we kill, reap,
+        and return exit code 124 so the orchestrator can surface the
+        condition as a warning rather than hanging.
+        """
         argv = [
-            *cli.split(),
+            *shlex.split(cli),
             "--prompt",
             request.prompt,
             "--duration",
@@ -81,7 +95,14 @@ class MagentaRealtimeBackend(BaseBackend):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, err = await proc.communicate()
+        try:
+            _, err = await asyncio.wait_for(
+                proc.communicate(), timeout=_DEFAULT_CLI_TIMEOUT_SEC
+            )
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return 124, f"magenta-rt CLI timed out after {_DEFAULT_CLI_TIMEOUT_SEC:.0f}s"
         return proc.returncode or 0, err.decode("utf-8", errors="replace")
 
     def _run_python(
@@ -126,7 +147,8 @@ class MagentaRealtimeBackend(BaseBackend):
         warnings: list[str] = []
 
         cli = get_settings().jg_magenta_rt_cli.strip()
-        if cli and shutil.which(cli.split()[0]):
+        cli_argv = shlex.split(cli) if cli else []
+        if cli_argv and shutil.which(cli_argv[0]):
             # See note in MT3Backend.transcribe_to_midi — the helper avoids
             # ``RuntimeError: asyncio.run() cannot be called from a running
             # event loop`` if a caller invokes this from async context.
@@ -138,7 +160,7 @@ class MagentaRealtimeBackend(BaseBackend):
                     duration_sec=0.0,
                     warnings=[f"magenta-rt CLI exit {rc}: {err.strip()[:400]}"],
                 )
-            model_name = f"magenta_rt cli ({cli.split()[0]})"
+            model_name = f"magenta_rt cli ({cli_argv[0]})"
         else:
             try:
                 self._run_python(request, output_path)

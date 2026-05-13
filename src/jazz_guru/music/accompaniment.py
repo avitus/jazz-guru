@@ -98,6 +98,16 @@ def build_backing_track(
     """
     if not chord_changes:
         raise ValueError("chord_changes must contain at least one symbol")
+    # Validate numeric inputs up front: a non-positive bars_per_chord
+    # produces an empty `range(...)` (silent no-op), a non-positive
+    # voicing_size produces an empty chord and crashes on `chord.bass()`,
+    # and a non-positive tempo crashes music21's MetronomeMark.
+    if not isinstance(bars_per_chord, int) or bars_per_chord <= 0:
+        raise ValueError("bars_per_chord must be a positive integer")
+    if not isinstance(voicing_size, int) or voicing_size <= 0:
+        raise ValueError("voicing_size must be a positive integer")
+    if tempo_bpm <= 0:
+        raise ValueError("tempo_bpm must be positive")
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
