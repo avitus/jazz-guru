@@ -146,11 +146,16 @@ def test_get_generation_backend_stubs_resolve() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_unavailable_backends_report_install_hint() -> None:
-    """Optional backends not installed in CI should report a hint."""
+def test_unavailable_backends_report_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Optional backends not installed in CI should report a hint.
+
+    Forces ``basic_pitch`` unavailable via monkeypatch instead of relying on
+    the ambient environment, so the test is deterministic on machines that
+    happen to have the package installed.
+    """
+    monkeypatch.setattr(BasicPitchBackend, "is_available", classmethod(lambda cls: False))
     rows = available_backends()
     assert rows["librosa"]["available"] is True  # always-on baseline
-    # Basic Pitch isn't installed in CI; ensure the hint surfaces.
     assert rows["basic_pitch"]["available"] is False
     assert "basic-pitch" in str(rows["basic_pitch"]["install_hint"])
 
@@ -250,7 +255,6 @@ class _StubUnderstanding:
         return MusicAnalysis(backend=self.name, detected_key="G minor", tempo_bpm=121.0)
 
 
-@pytest.mark.asyncio
 async def test_analyze_practice_take_orchestrates_all_backends(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -297,7 +301,6 @@ async def test_analyze_practice_take_orchestrates_all_backends(
     assert feedback.timing.notes
 
 
-@pytest.mark.asyncio
 async def test_analyze_practice_take_degrades_when_backend_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -327,7 +330,6 @@ async def test_analyze_practice_take_degrades_when_backend_unavailable(
     assert feedback.beat_tracking is not None  # baseline still ran
 
 
-@pytest.mark.asyncio
 async def test_analyze_practice_take_missing_audio_returns_warning(tmp_path: Path) -> None:
     feedback = await analyze_practice_take(tmp_path / "nope.wav")
     assert feedback.transcription is None
@@ -359,7 +361,6 @@ def test_load_leadsheet_missing_returns_empty(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_agent_tool_invokes_orchestrator(
     isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

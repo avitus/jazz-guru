@@ -27,6 +27,7 @@ import shutil
 from pathlib import Path
 
 from jazz_guru.config import get_settings
+from jazz_guru.music._compat import run_coro_sync
 from jazz_guru.music.interfaces import BaseBackend
 from jazz_guru.music.models import TranscriptionResult
 
@@ -134,7 +135,10 @@ class MT3Backend(BaseBackend):
 
         cli = get_settings().jg_mt3_cli.strip()
         if cli and shutil.which(cli.split()[0]):
-            rc, err = asyncio.run(self._run_cli(cli, audio_path, midi_path))
+            # ``transcribe_to_midi`` is part of a sync protocol but may be
+            # called from inside an event loop (agent tools / tests). Use
+            # the compat helper so we never collide with a running loop.
+            rc, err = run_coro_sync(self._run_cli(cli, audio_path, midi_path))
             if rc != 0:
                 return TranscriptionResult(
                     backend=self.name,

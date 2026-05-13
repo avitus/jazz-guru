@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 from jazz_guru.config import get_settings
+from jazz_guru.music._compat import run_coro_sync
 from jazz_guru.music.interfaces import BaseBackend
 from jazz_guru.music.models import MusicGenerationRequest, MusicGenerationResult
 
@@ -126,7 +127,10 @@ class MagentaRealtimeBackend(BaseBackend):
 
         cli = get_settings().jg_magenta_rt_cli.strip()
         if cli and shutil.which(cli.split()[0]):
-            rc, err = asyncio.run(self._run_cli(cli, request, output_path))
+            # See note in MT3Backend.transcribe_to_midi — the helper avoids
+            # ``RuntimeError: asyncio.run() cannot be called from a running
+            # event loop`` if a caller invokes this from async context.
+            rc, err = run_coro_sync(self._run_cli(cli, request, output_path))
             if rc != 0:
                 return MusicGenerationResult(
                     backend=self.name,

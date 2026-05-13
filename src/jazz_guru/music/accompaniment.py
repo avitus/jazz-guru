@@ -117,8 +117,18 @@ def build_backing_track(
     bass_part: Any = m21.stream.Part()
     bass_part.append(m21.instrument.AcousticBass())
 
-    ts_num = int(time_signature.split("/")[0])
-    quarter_per_chord = ts_num * bars_per_chord
+    try:
+        ts_num, ts_den = (int(x) for x in time_signature.split("/", 1))
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid time_signature {time_signature!r}, expected like '4/4'"
+        ) from exc
+    if ts_num <= 0 or ts_den <= 0:
+        raise ValueError("time_signature numerator and denominator must be positive")
+    # Beats are measured in quarter notes; a /8 denominator halves the beat
+    # length, so a 3/8 bar is 1.5 quarter notes long, not 3.
+    beat_length_ql = 4.0 / ts_den
+    quarter_per_chord = ts_num * bars_per_chord * beat_length_ql
     warnings: list[str] = []
     parsed_chords = 0
 
@@ -143,11 +153,12 @@ def build_backing_track(
             chord.transpose(-12, inPlace=True)
         piano_part.append(chord)
 
-        # Bass: root on each beat, dropped two octaves from the chord root.
+        # Bass: one note per beat (= 4/ts_den quarter notes), dropped two
+        # octaves from the chord root.
         root_pitch = cs.root()
         bass_pitch = root_pitch.transpose("-P15")
-        for _ in range(quarter_per_chord):
-            bass_part.append(m21.note.Note(bass_pitch, quarterLength=1))
+        for _ in range(ts_num * bars_per_chord):
+            bass_part.append(m21.note.Note(bass_pitch, quarterLength=beat_length_ql))
 
     score.insert(0, piano_part)
     score.insert(0, bass_part)

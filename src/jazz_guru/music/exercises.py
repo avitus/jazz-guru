@@ -15,6 +15,7 @@ user already has. Inputs use plain-text labels (``"Bb major"``,
 """
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -177,15 +178,17 @@ def ii_v_i_exercise(
 
     notes = 0
     for sym in chord_seq:
-        measure: Any = m21.stream.Measure()
-        try:
-            cs = m21.harmony.ChordSymbol(normalize_chord_symbol(sym))
-            measure.insert(0, cs)
-        except Exception:
-            pass
-        measure.append(m21.note.Rest(quarterLength=4 * bars_per_chord))
-        part.append(measure)
-        notes += 1
+        # Emit `bars_per_chord` separate 4/4 measures per chord so each bar
+        # is its own properly-sized measure (rather than one oversized rest).
+        # The chord symbol attaches to the first measure only.
+        for bar_idx in range(bars_per_chord):
+            measure: Any = m21.stream.Measure()
+            if bar_idx == 0:
+                with contextlib.suppress(Exception):
+                    measure.insert(0, m21.harmony.ChordSymbol(normalize_chord_symbol(sym)))
+            measure.append(m21.note.Rest(quarterLength=4))
+            part.append(measure)
+            notes += 1
 
     score.append(part)
     _write(score, output_path)

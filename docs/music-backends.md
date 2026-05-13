@@ -7,7 +7,7 @@ understanding, generation — it delegates to a swappable set of
 foundation model is mandatory, and every optional backend lazy-imports
 its dependency so the harness keeps booting if a model is not installed.
 
-```
+```text
 LLM agent brain  (anthropic claude)
   + music-theory tools          : music21, MIDI, MusicXML (built-in)
   + transcription backend       : Basic Pitch | MT3 | …

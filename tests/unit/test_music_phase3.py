@@ -325,7 +325,6 @@ def test_magenta_rt_cli_path(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_build_backing_track_tool(isolated_workspace: Path) -> None:
     r = register_all()
     session_dir = isolated_workspace / "sessions" / "t-p3"
@@ -348,7 +347,6 @@ async def test_build_backing_track_tool(isolated_workspace: Path) -> None:
     assert Path(out["midi_path"]).exists()
 
 
-@pytest.mark.asyncio
 async def test_generate_exercise_tool(isolated_workspace: Path) -> None:
     r = register_all()
     session_dir = isolated_workspace / "sessions" / "t-p3"
@@ -371,7 +369,6 @@ async def test_generate_exercise_tool(isolated_workspace: Path) -> None:
     assert Path(out["musicxml_path"]).exists()
 
 
-@pytest.mark.asyncio
 async def test_generate_music_tool_with_mocked_backend(
     isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -414,7 +411,6 @@ async def test_generate_music_tool_with_mocked_backend(
     assert Path(out["output_path"]).exists()
 
 
-@pytest.mark.asyncio
 async def test_generate_music_tool_when_disabled(
     isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
