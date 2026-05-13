@@ -1,6 +1,6 @@
 # Tier-2 dynamic tools: tests + self-improvement
 
-**Status:** In progress (PR 1 complete)
+**Status:** In progress (PRs 1–5 done; PRs 6–8 pending)
 **Owner:** @avitus
 **Drafted:** 2026-05-12
 **Target tier:** Tier 2 (`generated_tools` table). Tier 1 already supports iteration via `tool_create` replacement; Tier 3 is deliberately out of scope (manual review floor).
@@ -353,7 +353,7 @@ _Update this section as PRs land. Use the table below to track state. The "Notes
 | 2. `store` versioning + rollback | Done | `store.upsert` snapshots the prior row into `generated_tool_versions` before mutating, with `origin`/`rationale` propagated for audit. Added `list_versions`, `get_version`, `list_tests`, `rollback` (forward in version space — see §B.6). 15 round-trip tests under real Postgres. Added `tests/unit/conftest.py` to dispose the cached async engine per test (asyncpg + pytest-asyncio loop boundary). |
 | 3. Predicate DSL | Done | `src/jazz_guru/testing/predicates.py`. Operators: eq, ne, gt/gte/lt/lte, len (scalar or nested), contains, regex, type, absent, present, all, any. Path syntax with dots, `[N]`, and `[*]` quantifier (single or nested). Bare scalar = implicit eq. Pure logic, no `eval`. 76 unit tests covering operators, path parsing, quantifier expansion, missing-value semantics, and error cases. |
 | 4. Runner + meta-tools + CLI + smoke recording | Done | Two commits: agent-facing slice (`testing/runner.py`, `actions/tools/tool_test_meta.py` with `tool_test_add/remove/list/run`, smoke recording in `tool_publish`, hint extension), then CLI slice (`cli_tool.py` exposing `jazz-guru tool list/show/test/diff/rollback`). 49 new tests covering runner (11), meta-tools (18), smoke recording (11), CLI (9). `tool diff` takes optional `v2` (omit = current); `tool unlock`/`tool pending` deferred to PR 7. |
-| 5. Failure-signal extractor | Not started | |
+| 5. Failure-signal extractor | Done | `testing/failure_signals.py` mines trace JSONL for three failure modes: handler-raised (`ok: False`), policy denial (`error` without `ok`), and dynamic-tool subprocess errors (`result_has_error`). Small `ActionController` change to emit `result_has_error` + `error_excerpt` when a tool returns `{"__error__": ...}` — previously these slipped through as `ok: True`. 13 tests; pure trace parsing, no DB. |
 | 6. Improver module + gate | Not started | |
 | 7. Reflexion wiring + breakers + telemetry | Not started | |
 | 8. Docs | Not started | |
