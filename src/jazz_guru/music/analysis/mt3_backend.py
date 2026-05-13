@@ -32,10 +32,6 @@ from jazz_guru.music._compat import run_coro_sync
 from jazz_guru.music.interfaces import BaseBackend
 from jazz_guru.music.models import TranscriptionResult
 
-# 10-minute hard cap on the external CLI call so a hung MT3 invocation
-# can't block the agent loop forever. Tunable via JG_MT3_CLI_TIMEOUT_SEC.
-_DEFAULT_CLI_TIMEOUT_SEC = 600.0
-
 
 class MT3Backend(BaseBackend):
     """Audio → MIDI via Magenta's MT3 model.
@@ -93,25 +89,27 @@ class MT3Backend(BaseBackend):
     async def _run_cli(self, cli: str, audio_path: Path, midi_path: Path) -> tuple[int, str]:
         """Shell out to a user-configured MT3 CLI; return (rc, stderr).
 
-        Bounded by ``_DEFAULT_CLI_TIMEOUT_SEC`` so a stuck child can't
-        wedge the agent loop. On timeout we kill, reap, and return a
-        clear ``124`` exit code so the orchestrator surfaces the
-        condition as a warning rather than hanging.
+        Bounded by ``JG_MT3_CLI_TIMEOUT_SEC`` (default 600s) so a stuck
+        child can't wedge the agent loop. On timeout we kill, reap, and
+        return exit code 124. Spawn failures (binary removed between
+        probe and run, permissions, ...) surface as exit code 127.
         """
         argv = [*shlex.split(cli), "--input", str(audio_path), "--output", str(midi_path)]
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        timeout = get_settings().jg_mt3_cli_timeout_sec
         try:
-            _, err = await asyncio.wait_for(
-                proc.communicate(), timeout=_DEFAULT_CLI_TIMEOUT_SEC
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+        except OSError as exc:
+            return 127, f"failed to start MT3 CLI: {exc}"
+        try:
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
             proc.kill()
             await proc.wait()
-            return 124, f"MT3 CLI timed out after {_DEFAULT_CLI_TIMEOUT_SEC:.0f}s"
+            return 124, f"MT3 CLI timed out after {timeout:.0f}s"
         return proc.returncode or 0, err.decode("utf-8", errors="replace")
 
     def _run_python(self, audio_path: Path, midi_path: Path) -> None:
@@ -181,7 +179,10 @@ class MT3Backend(BaseBackend):
             model_name = f"mt3 cli ({cli_argv[0]})"
         else:
             try:
-                self._run_python(audio_path, midi_path)
+                # ``_run_python`` blocks on JAX inference; route through
+                # ``run_coro_sync(asyncio.to_thread(...))`` so async
+                # callers (agent tools / tests) don't stall the loop.
+                run_coro_sync(asyncio.to_thread(self._run_python, audio_path, midi_path))
             except Exception as exc:  # pragma: no cover - depends on optional dep
                 return TranscriptionResult(
                     backend=self.name,

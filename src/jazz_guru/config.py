@@ -188,6 +188,7 @@ class Settings(BaseSettings):
     # `<cli> --input <audio> --output <midi>`; otherwise the adapter
     # tries to import `mt3.inference` directly.
     jg_mt3_cli: str = ""
+    jg_mt3_cli_timeout_sec: float = 600.0
     # Hugging Face model id for the Music Flamingo backend. `-hf` is the
     # base model; `-chat` is the instruction-tuned variant.
     music_flamingo_model: str = "nvidia/audio-flamingo-3-hf"
@@ -200,6 +201,7 @@ class Settings(BaseSettings):
     # Magenta RealTime: same CLI/python dual-path as MT3. The CLI must
     # accept `--prompt <text> --duration <sec> --output <wav>`.
     jg_magenta_rt_cli: str = ""
+    jg_magenta_rt_cli_timeout_sec: float = 300.0
     # ElevenLabs Music: hosted music generation. ELEVENLABS_API_KEY is
     # required; ELEVENLABS_MUSIC_MODEL pins a specific model id.
     elevenlabs_api_key: str = ""

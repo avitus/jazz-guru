@@ -30,10 +30,6 @@ from jazz_guru.music._compat import run_coro_sync
 from jazz_guru.music.interfaces import BaseBackend
 from jazz_guru.music.models import MusicGenerationRequest, MusicGenerationResult
 
-# Hard cap on the external CLI so a hung magenta-rt invocation can't
-# wedge the agent loop. Five minutes is generous for typical 30s clips.
-_DEFAULT_CLI_TIMEOUT_SEC = 300.0
-
 
 class MagentaRealtimeBackend(BaseBackend):
     """Audio generation via Magenta RealTime."""
@@ -80,9 +76,11 @@ class MagentaRealtimeBackend(BaseBackend):
     ) -> tuple[int, str]:
         """Shell out to a user-configured magenta-rt CLI.
 
-        Bounded by ``_DEFAULT_CLI_TIMEOUT_SEC``; on timeout we kill, reap,
-        and return exit code 124 so the orchestrator can surface the
-        condition as a warning rather than hanging.
+        Bounded by ``JG_MAGENTA_RT_CLI_TIMEOUT_SEC`` (default 300s); on
+        timeout we kill, reap, and return exit code 124. Spawn failures
+        (binary removed between probe and run, permissions, ...) come
+        back as exit code 127. Either way the orchestrator surfaces a
+        warning rather than crashing.
         """
         argv = [
             *shlex.split(cli),
@@ -95,19 +93,21 @@ class MagentaRealtimeBackend(BaseBackend):
         ]
         if request.seed is not None:
             argv += ["--seed", str(request.seed)]
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        timeout = get_settings().jg_magenta_rt_cli_timeout_sec
         try:
-            _, err = await asyncio.wait_for(
-                proc.communicate(), timeout=_DEFAULT_CLI_TIMEOUT_SEC
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+        except OSError as exc:
+            return 127, f"failed to start magenta-rt CLI: {exc}"
+        try:
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
             proc.kill()
             await proc.wait()
-            return 124, f"magenta-rt CLI timed out after {_DEFAULT_CLI_TIMEOUT_SEC:.0f}s"
+            return 124, f"magenta-rt CLI timed out after {timeout:.0f}s"
         return proc.returncode or 0, err.decode("utf-8", errors="replace")
 
     def _run_python(
@@ -175,7 +175,10 @@ class MagentaRealtimeBackend(BaseBackend):
             model_name = f"magenta_rt cli ({cli_argv[0]})"
         else:
             try:
-                self._run_python(request, output_path)
+                # ``_run_python`` blocks on the underlying compose call;
+                # route via ``run_coro_sync(asyncio.to_thread(...))`` so
+                # async callers don't stall the event loop.
+                run_coro_sync(asyncio.to_thread(self._run_python, request, output_path))
             except Exception as exc:  # pragma: no cover - depends on optional dep
                 return MusicGenerationResult(
                     backend=self.name,
