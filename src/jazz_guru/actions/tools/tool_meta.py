@@ -338,7 +338,12 @@ async def tool_publish(name: str, note: str | None = None) -> dict[str, Any]:
     smoke_recorded = False
     try:
         sid = current().session_id
-        last_input = _find_last_successful_invocation(spec.name, sid)
+        # Trace scanning does blocking file I/O. Offload to a thread so a
+        # large session trace doesn't stall the event loop while publish
+        # is running.
+        last_input = await asyncio.to_thread(
+            _find_last_successful_invocation, spec.name, sid
+        )
         if last_input is not None:
             smoke_recorded = await _record_smoke_case(row_id, last_input)
     except Exception as e:  # never let smoke-recording break a publish
