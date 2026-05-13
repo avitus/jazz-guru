@@ -181,6 +181,10 @@ class Settings(BaseSettings):
     otel_service_name: str = "jazz-guru"
     otel_exporter_otlp_endpoint: str = ""
 
+    # Tier-2 tool improvement loop (plan §B.7)
+    jg_improver_threshold: int = 2  # per-tool default; overridable in tool meta
+    jg_improver_max_per_run: int = 3  # max maybe_improve calls per reflexion
+
     def ensure_dirs(self) -> None:
         for d in (self.jg_workspace_dir, self.jg_state_dir, self.jg_trace_dir):
             d.mkdir(parents=True, exist_ok=True)

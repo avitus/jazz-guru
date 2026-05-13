@@ -147,6 +147,54 @@ def test_tool_rollback_unknown_returns_error(published_tool: str) -> None:
     assert "no version 99" in result.stdout or "no version" in result.stdout
 
 
+def test_tool_unlock_clears_lock_flag(published_tool: str) -> None:
+    """``tool unlock`` clears ``improve_locked`` and resets the counter."""
+
+    async def _lock() -> None:
+        from sqlalchemy import select
+
+        from jazz_guru.db import session_scope
+        from jazz_guru.state import GeneratedTool
+
+        async with session_scope() as s:
+            tool = (
+                await s.execute(
+                    select(GeneratedTool).where(GeneratedTool.name == published_tool)
+                )
+            ).scalar_one()
+            tool.meta = {"improve_locked": True, "consecutive_failures": 3}
+
+    asyncio.run(_lock())
+    _dispose_engine()
+    result = runner.invoke(app, ["tool", "unlock", published_tool])
+    assert result.exit_code == 0
+    assert "unlocked" in result.stdout
+
+    async def _read_meta() -> dict[str, object]:
+        from sqlalchemy import select
+
+        from jazz_guru.db import session_scope
+        from jazz_guru.state import GeneratedTool
+
+        async with session_scope() as s:
+            tool = (
+                await s.execute(
+                    select(GeneratedTool).where(GeneratedTool.name == published_tool)
+                )
+            ).scalar_one()
+            return dict(tool.meta or {})
+
+    _dispose_engine()
+    meta = asyncio.run(_read_meta())
+    assert "improve_locked" not in meta
+    assert meta["consecutive_failures"] == 0
+
+
+def test_tool_unlock_unknown_tool() -> None:
+    result = runner.invoke(app, ["tool", "unlock", "_t_definitely_not_there"])
+    assert result.exit_code != 0
+
+
 def test_tool_diff_between_versions(published_tool: str) -> None:
     """Bump the tool, then diff v1 against the current version."""
 

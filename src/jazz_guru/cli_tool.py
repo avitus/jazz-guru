@@ -260,3 +260,45 @@ def cmd_rollback(
     rc = asyncio.run(_run_async())
     if rc != 0:
         raise typer.Exit(code=rc)
+
+
+@tool_app.command("unlock")
+def cmd_unlock(name: str = typer.Argument(..., help="Tool name.")) -> None:
+    """Clear ``improve_locked`` so the improver can try the tool again.
+
+    Set by the improver after ``consecutive_failures`` reaches
+    ``MAX_ATTEMPTS``. The agent cannot self-clear this; an operator does
+    after reviewing and (presumably) fixing what's wrong.
+    """
+
+    async def _run_async() -> int:
+        from sqlalchemy import select
+
+        from jazz_guru.db import session_scope
+        from jazz_guru.state import GeneratedTool
+
+        async with session_scope() as s:
+            tool = (
+                await s.execute(select(GeneratedTool).where(GeneratedTool.name == name))
+            ).scalar_one_or_none()
+            if tool is None:
+                console.print(f"[red]unknown tool {name!r}[/red]")
+                return 1
+            meta = dict(tool.meta or {})
+            was_locked = bool(meta.pop("improve_locked", False))
+            meta.pop("improve_lock_reason", None)
+            meta["consecutive_failures"] = 0
+            tool.meta = meta
+        if was_locked:
+            console.print(
+                f"[green]unlocked[/green] {name}; consecutive_failures reset to 0"
+            )
+        else:
+            console.print(
+                f"[yellow]{name} was not locked; consecutive_failures reset to 0[/yellow]"
+            )
+        return 0
+
+    rc = asyncio.run(_run_async())
+    if rc != 0:
+        raise typer.Exit(code=rc)

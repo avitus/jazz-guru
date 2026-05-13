@@ -7,8 +7,9 @@ from typing import Any
 
 from sqlalchemy import select
 
-from jazz_guru.config import get_goal
+from jazz_guru.config import get_goal, get_settings
 from jazz_guru.db import session_scope
+from jazz_guru.distillation.improver import ImproveStatus, maybe_improve
 from jazz_guru.distillation.playbook import upsert_entry
 from jazz_guru.llm import complete
 from jazz_guru.logging import get_logger
@@ -21,6 +22,7 @@ from jazz_guru.state import (
     log_event,
     write_snapshot,
 )
+from jazz_guru.testing.failure_signals import extract_from_session
 
 log = get_logger(__name__)
 
@@ -217,8 +219,99 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
         enqueue_eval()
     except Exception as e:  # redis may not be up in tests
         log.info("reflexion.eval_enqueue_skipped", err=str(e))
+
+    # Tool-improvement pass (plan §B.2): mine the session's trace for
+    # failures, then dispatch maybe_improve for any tool that crossed its
+    # threshold, capped per reflexion run. Best-effort; any exception
+    # leaves the rest of reflexion's work intact.
+    try:
+        await _run_improvement_pass(session_id)
+    except Exception as e:
+        log.warning("reflexion.improvement_pass_failed", err=str(e))
+
     log.info("reflexion.done", score=result.score)
     return result
+
+
+async def _run_improvement_pass(session_id: uuid.UUID) -> None:
+    """Drive ``maybe_improve`` for each tool that exceeded its threshold.
+
+    The cap on calls per reflexion run is a cost guardrail: a session full
+    of broken tools shouldn't fan out into an unbounded number of LLM
+    proposal calls. Per-tool threshold defaults to ``jg_improver_threshold``
+    but a tool can override via ``meta.improve_threshold``.
+    """
+    settings = get_settings()
+    failures_by_tool = extract_from_session(session_id)
+    if not failures_by_tool:
+        return
+    max_calls = max(0, int(settings.jg_improver_max_per_run))
+    default_threshold = max(1, int(settings.jg_improver_threshold))
+    calls_made = 0
+    for tool_name, failures in failures_by_tool.items():
+        if calls_made >= max_calls:
+            log.info("reflexion.improver_cap_reached", cap=max_calls)
+            break
+        # Threshold lives on the tool's meta (set by an operator) or falls
+        # back to the global default. Skip in-place if not enough signal.
+        from jazz_guru.actions import store
+
+        spec = await store.get_spec(tool_name)
+        if spec is None:
+            continue
+        # ``improve_threshold`` is operator-controlled meta. A garbage value
+        # (string, None, etc.) shouldn't abort the entire reflexion pass
+        # — fall back to the global default and warn instead.
+        raw_threshold = (spec.meta or {}).get("improve_threshold", default_threshold)
+        try:
+            per_tool_threshold = max(1, int(raw_threshold))
+        except (TypeError, ValueError):
+            log.warning(
+                "reflexion.invalid_improve_threshold",
+                tool_name=tool_name,
+                value=raw_threshold,
+            )
+            per_tool_threshold = default_threshold
+        if len(failures) < per_tool_threshold:
+            continue
+        await log_event(
+            session_id=session_id,
+            event_type=EventType.TOOL_IMPROVE_PROPOSED.value,
+            payload={
+                "name": tool_name,
+                "version_current": spec.version,
+                "failures_seen": len(failures),
+            },
+        )
+        outcome = await maybe_improve(tool_name, failures)
+        calls_made += 1
+        if outcome.status == ImproveStatus.PASSED:
+            await log_event(
+                session_id=session_id,
+                event_type=EventType.TOOL_IMPROVE_PASSED.value,
+                payload={
+                    "name": tool_name,
+                    "version_old": spec.version,
+                    "version_new": outcome.new_version,
+                    "n_new_cases": outcome.n_new_cases,
+                    "rationale": (outcome.rationale or "")[:500],
+                },
+            )
+        elif outcome.status in (
+            ImproveStatus.TESTS_FAILED,
+            ImproveStatus.PROPOSE_FAILED,
+            ImproveStatus.NO_OP,
+        ):
+            await log_event(
+                session_id=session_id,
+                event_type=EventType.TOOL_IMPROVE_FAILED.value,
+                payload={
+                    "name": tool_name,
+                    "outcome": outcome.status,
+                    "n_existing_fail": outcome.n_existing_fail,
+                    "failures": outcome.failures[:5],
+                },
+            )
 
 
 def reflexion_job(session_id_str: str) -> dict[str, Any]:

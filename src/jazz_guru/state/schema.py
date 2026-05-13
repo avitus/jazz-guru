@@ -51,6 +51,11 @@ class EventType(enum.StrEnum):
     MEMORY_READ = "memory_read"
     REFLEXION = "reflexion"
     ERROR = "error"
+    # Tier-2 tool improvement loop (plan §B.8)
+    TOOL_IMPROVE_PROPOSED = "tool_improve_proposed"
+    TOOL_IMPROVE_PASSED = "tool_improve_passed"
+    TOOL_IMPROVE_FAILED = "tool_improve_failed"
+    TOOL_ROLLBACK = "tool_rollback"
 
 
 class Session(Base):
