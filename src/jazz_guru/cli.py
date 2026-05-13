@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from jazz_guru.cli_tool import tool_app
 from jazz_guru.config import get_goal, get_policy, get_settings
 from jazz_guru.distillation import enqueue_reflexion, run_reflexion
 from jazz_guru.eval import run_all
@@ -17,6 +18,7 @@ from jazz_guru.harness import AgentLoop, SessionManager
 from jazz_guru.llm import health_check_detailed
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="jazz-guru agent harness CLI")
+app.add_typer(tool_app, name="tool")
 console = Console()
 
 
