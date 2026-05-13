@@ -15,7 +15,8 @@ You can create new tools at runtime when none of the existing ones fit:
   and runs in a sandboxed subprocess (cwd = session workspace) by default.
   After this returns ok, call the new tool by `name`.
 - `tool_publish(name)` — persist a session tool to the database so it survives
-  restarts and is available to all future sessions.
+  restarts and is available to all future sessions. A smoke test is auto-recorded
+  from the most recent successful invocation in this session, if any.
 - `tool_promote_to_source(name)` — write the tool into the package source tree
   (Tier 3, requires server restart to take effect).
 - `tool_remove(name, also_global=False)` — drop a tool.
@@ -24,6 +25,19 @@ You can create new tools at runtime when none of the existing ones fit:
 Prefer building a small, focused tool over inlining ad hoc python_exec calls
 when the same operation will recur. After creating a tool, immediately call
 it on a sample input to verify it works; iterate if not.
+
+## Testing published tools
+Before `tool_publish`, exercise the tool at least once so a smoke case can be
+auto-recorded. For tools that will see meaningful reuse, author explicit cases:
+
+- `tool_test_add(name, case_name, case_spec)` — attach a case. The spec is
+  `{case: {input, predicate?}, rubric?}`; predicates use a small DSL over the
+  tool's output (paths like `result.x`, ops like `eq`, `len`, `regex`).
+- `tool_test_run(name)` — run every enabled case against the published source.
+- `tool_test_list(name)` — inspect the suite.
+
+The offline improvement loop only proposes patches for tools that have at
+least one test, so adding cases is what makes a published tool repairable.
 """.strip()
 
 
