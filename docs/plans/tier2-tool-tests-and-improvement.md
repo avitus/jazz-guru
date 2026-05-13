@@ -350,7 +350,7 @@ _Update this section as PRs land. Use the table below to track state. The "Notes
 | PR | Status | Notes |
 |----|--------|-------|
 | 1. Migration + ORM | Done | Revision `0003_tool_versions_tests.py`. Three tables: `generated_tool_versions`, `generated_tool_tests`, `generated_tool_test_runs`. Up/down/re-up cycle verified against local Postgres. 7 schema-pinning tests in `tests/unit/test_tool_versions_schema.py`. |
-| 2. `store` versioning + rollback | Not started | |
+| 2. `store` versioning + rollback | Done | `store.upsert` snapshots the prior row into `generated_tool_versions` before mutating, with `origin`/`rationale` propagated for audit. Added `list_versions`, `get_version`, `list_tests`, `rollback` (forward in version space — see §B.6). 15 round-trip tests under real Postgres. Added `tests/unit/conftest.py` to dispose the cached async engine per test (asyncpg + pytest-asyncio loop boundary). |
 | 3. Predicate DSL | Not started | |
 | 4. Runner + meta-tools + CLI + smoke recording | Not started | |
 | 5. Failure-signal extractor | Not started | |
