@@ -155,10 +155,14 @@ def test_unavailable_backends_report_install_hint() -> None:
     assert "basic-pitch" in str(rows["basic_pitch"]["install_hint"])
 
 
-def test_optional_backend_call_raises_unavailable() -> None:
-    """Calling a stub backend produces a clean BackendUnavailableError."""
+def test_optional_backend_call_raises_unavailable(tmp_path: Path) -> None:
+    """Calling a real adapter without its dep produces a clean BackendUnavailableError."""
+    audio = tmp_path / "tone.wav"
+    audio.write_bytes(b"\x00")
+    if OmnizartBackend.is_available():
+        pytest.skip("omnizart is installed; this test covers the missing-dep path")
     with pytest.raises(BackendUnavailableError) as exc:
-        OmnizartBackend().analyze_chords(Path("/tmp/no-such-file.wav"))
+        OmnizartBackend().analyze_chords(audio)
     assert exc.value.backend == "omnizart"
     assert exc.value.install_hint  # message guides the user
 
@@ -420,6 +424,231 @@ def test_cli_analyze_take_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     assert "cli-stubbed" in result.output
     # Backend table should mention librosa as available.
     assert "librosa" in result.output
+
+
+# ---------------------------------------------------------------------------
+# 8) Phase-2 adapters: omnizart, mt3, music_flamingo with mocked deps
+# ---------------------------------------------------------------------------
+
+
+def test_omnizart_parses_chord_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    audio = tmp_path / "take.wav"
+    audio.write_bytes(b"\x00")
+
+    def fake_transcribe(self: OmnizartBackend, audio_path: Path, output_dir: Path) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # Header + two rows; omnizart's real output uses `chord, start, end`.
+        (output_dir / f"{audio_path.stem}.csv").write_text(
+            "chord,start,end\nC:maj,0.5,2.1\nA:min,2.1,4.0\n"
+        )
+
+    monkeypatch.setattr(OmnizartBackend, "_transcribe_chords", fake_transcribe)
+    monkeypatch.setattr(OmnizartBackend, "is_available", classmethod(lambda cls: True))
+
+    result = OmnizartBackend().analyze_chords(audio)
+    assert result.backend == "omnizart"
+    assert len(result.chords) == 2
+    assert result.chords[0].chord == "C:maj"
+    assert result.chords[0].start_sec == 0.5
+    assert result.chords[1].chord == "A:min"
+
+
+def test_omnizart_parses_beat_csvs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    audio = tmp_path / "groove.wav"
+    audio.write_bytes(b"\x00")
+
+    def fake_transcribe(self: OmnizartBackend, audio_path: Path, output_dir: Path) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / f"{audio_path.stem}_beat.csv").write_text(
+            "0.000000\n0.500000\n1.000000\n1.500000\n"
+        )
+        (output_dir / f"{audio_path.stem}_down_beat.csv").write_text(
+            "0.000000\n2.000000\n"
+        )
+
+    monkeypatch.setattr(OmnizartBackend, "_transcribe_beats", fake_transcribe)
+    monkeypatch.setattr(OmnizartBackend, "is_available", classmethod(lambda cls: True))
+
+    result = OmnizartBackend().track_beats(audio)
+    assert result.beats_sec == [0.0, 0.5, 1.0, 1.5]
+    assert result.downbeats_sec == [0.0, 2.0]
+    # 0.5 s IOI -> 120 BPM
+    assert result.tempo_bpm is not None
+    assert abs(result.tempo_bpm - 120.0) < 0.1
+
+
+def test_omnizart_missing_csv_returns_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio = tmp_path / "empty.wav"
+    audio.write_bytes(b"\x00")
+
+    def fake_transcribe(self: OmnizartBackend, audio_path: Path, output_dir: Path) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)  # but write no CSV
+
+    monkeypatch.setattr(OmnizartBackend, "_transcribe_chords", fake_transcribe)
+    monkeypatch.setattr(OmnizartBackend, "is_available", classmethod(lambda cls: True))
+
+    result = OmnizartBackend().analyze_chords(audio)
+    assert result.chords == []
+    assert any("no parseable chord events" in w for w in result.warnings)
+
+
+def test_mt3_python_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    audio = tmp_path / "phrase.wav"
+    audio.write_bytes(b"\x00")
+
+    midi_target: dict[str, Path] = {}
+
+    def fake_run_python(self: MT3Backend, audio_path: Path, midi_path: Path) -> None:
+        # write a valid MIDI through mido so midi_note_count can parse it
+        import mido  # type: ignore[import-untyped]
+
+        midi_path.parent.mkdir(parents=True, exist_ok=True)
+        mid = mido.MidiFile()
+        track = mido.MidiTrack()
+        mid.tracks.append(track)
+        track.append(mido.Message("note_on", note=64, velocity=64, time=0))
+        track.append(mido.Message("note_off", note=64, velocity=0, time=120))
+        mid.save(str(midi_path))
+        midi_target["path"] = midi_path
+
+    monkeypatch.setattr(MT3Backend, "_run_python", fake_run_python)
+    monkeypatch.setattr(MT3Backend, "is_available", classmethod(lambda cls: True))
+    # Force the adapter into the python path by clearing JG_MT3_CLI.
+    monkeypatch.setattr(get_settings(), "jg_mt3_cli", "")
+
+    result = MT3Backend().transcribe_to_midi(audio)
+    assert result.backend == "mt3"
+    assert result.midi_path == midi_target["path"]
+    assert result.note_count == 1
+    assert result.model_name == "mt3 (python)"
+
+
+def test_mt3_cli_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    audio = tmp_path / "phrase.wav"
+    audio.write_bytes(b"\x00")
+
+    monkeypatch.setattr(get_settings(), "jg_mt3_cli", "fake-mt3-cli")
+    monkeypatch.setattr(MT3Backend, "is_available", classmethod(lambda cls: True))
+    # Pretend the CLI is on PATH.
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
+
+    async def fake_run_cli(
+        self: MT3Backend, cli: str, audio_path: Path, midi_path: Path
+    ) -> tuple[int, str]:
+        import mido  # type: ignore[import-untyped]
+
+        midi_path.parent.mkdir(parents=True, exist_ok=True)
+        mid = mido.MidiFile()
+        track = mido.MidiTrack()
+        mid.tracks.append(track)
+        track.append(mido.Message("note_on", note=60, velocity=64, time=0))
+        track.append(mido.Message("note_off", note=60, velocity=0, time=240))
+        mid.save(str(midi_path))
+        return 0, ""
+
+    monkeypatch.setattr(MT3Backend, "_run_cli", fake_run_cli)
+
+    result = MT3Backend().transcribe_to_midi(audio)
+    assert result.backend == "mt3"
+    assert result.note_count == 1
+    assert result.model_name and result.model_name.startswith("mt3 cli")
+
+
+def test_mt3_cli_failure_surfaces_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio = tmp_path / "phrase.wav"
+    audio.write_bytes(b"\x00")
+    monkeypatch.setattr(get_settings(), "jg_mt3_cli", "fake-mt3-cli")
+    monkeypatch.setattr(MT3Backend, "is_available", classmethod(lambda cls: True))
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
+
+    async def fake_run_cli(
+        self: MT3Backend, cli: str, audio_path: Path, midi_path: Path
+    ) -> tuple[int, str]:
+        return 2, "checkpoint not found"
+
+    monkeypatch.setattr(MT3Backend, "_run_cli", fake_run_cli)
+
+    result = MT3Backend().transcribe_to_midi(audio)
+    assert result.midi_path is None
+    assert any("checkpoint not found" in w for w in result.warnings)
+
+
+def test_music_flamingo_extracts_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio = tmp_path / "ballad.wav"
+    audio.write_bytes(b"\x00")
+
+    def fake_predict(
+        self: MusicFlamingoBackend,
+        audio_path: Path,
+        prompt: str,
+        *,
+        max_new_tokens: int,
+        model_id: str,
+    ) -> str:
+        return (
+            "This is a medium-swing jazz ballad in the key of G minor. "
+            "Tempo: 96 BPM. Time signature: 4/4. The performer outlines "
+            "the chord changes mostly with chord tones."
+        )
+
+    monkeypatch.setattr(MusicFlamingoBackend, "_predict", fake_predict)
+    monkeypatch.setattr(MusicFlamingoBackend, "is_available", classmethod(lambda cls: True))
+
+    result = MusicFlamingoBackend().analyze_audio(
+        audio, context=MusicContext(chart="My Funny Valentine", instrument="tenor-sax")
+    )
+    assert result.backend == "music_flamingo"
+    assert result.summary and "G minor" in result.summary
+    assert result.detected_key
+    assert "g minor" in result.detected_key.lower()
+    assert result.tempo_bpm == 96.0
+    assert result.time_signature == "4/4"
+
+
+def test_music_flamingo_prompt_includes_chart_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio = tmp_path / "blues.wav"
+    audio.write_bytes(b"\x00")
+    captured: dict[str, str] = {}
+
+    def fake_predict(
+        self: MusicFlamingoBackend,
+        audio_path: Path,
+        prompt: str,
+        *,
+        max_new_tokens: int,
+        model_id: str,
+    ) -> str:
+        captured["prompt"] = prompt
+        return "Blues in B-flat."
+
+    monkeypatch.setattr(MusicFlamingoBackend, "_predict", fake_predict)
+    monkeypatch.setattr(MusicFlamingoBackend, "is_available", classmethod(lambda cls: True))
+
+    MusicFlamingoBackend().analyze_audio(
+        audio, context=MusicContext(chart="Bb Blues", instrument="trumpet")
+    )
+    assert "Bb Blues" in captured["prompt"]
+    assert "trumpet" in captured["prompt"]
+
+
+def test_music_flamingo_extract_fields_helper() -> None:
+    """Regex sweep is robust to wording variations."""
+    from jazz_guru.music.analysis.music_flamingo_backend import _extract_fields
+
+    out = _extract_fields(
+        "Likely key: E-flat major. Tempo: about 132 BPM. 4/4 time."
+    )
+    # The key regex is intentionally narrow; even partial extraction is useful.
+    assert out.get("tempo_bpm") == 132.0
+    assert out.get("time_signature") == "4/4"
 
 
 def test_event_loop_runs_in_thread_for_sync_backends(monkeypatch: pytest.MonkeyPatch) -> None:

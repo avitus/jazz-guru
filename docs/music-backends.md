@@ -36,16 +36,34 @@ unlocks the next layer of the practice-take pipeline.
 
 1. **Basic Pitch** — Spotify's audio→MIDI model. Small, runs on CPU,
    works well for monophonic / lightly-polyphonic acoustic recordings
-   like a saxophone take. `pip install 'basic-pitch>=0.4'`
-2. **Omnizart** or **MT3** — chord/beat/melody transcription for denser
-   material. `pip install omnizart` (CPU-friendly) or follow the
-   [MT3 install guide](https://github.com/magenta/mt3) for the larger
-   JAX-based model.
-3. **Music Flamingo** — music-understanding LLM for free-text
-   descriptions ("medium-swing ballad in E♭, soloist mostly stays
-   inside chord tones…"). See
-   [NVIDIA Audio-Flamingo](https://github.com/nvidia/Audio-Flamingo).
-4. **Magenta RealTime** or **ElevenLabs Music** — optional generation
+   like a saxophone take.
+   ```bash
+   pip install 'basic-pitch>=0.4'
+   ```
+2. **Omnizart** — chord + beat ASR (TensorFlow-based, CPU-friendly).
+   The model checkpoints are not bundled with the wheel; you have to
+   pull them on first install:
+   ```bash
+   pip install omnizart
+   omnizart download-checkpoints
+   ```
+3. **MT3** — denser-material transcription. Magenta's MT3 has no
+   stable Python API; this adapter supports two paths:
+   - **CLI**: point `JG_MT3_CLI` at any wrapper that accepts
+     `--input <audio> --output <midi>`.
+   - **Python**: if `import mt3.inference` succeeds, the adapter
+     uses it directly. See
+     [MT3](https://github.com/magenta/mt3) for the JAX/T5X install.
+4. **Music Flamingo** — music-understanding LLM (NVIDIA Audio Flamingo
+   3) for free-text descriptions ("medium-swing ballad in E♭, soloist
+   mostly stays inside chord tones…").
+   ```bash
+   pip install 'jazz-guru[audio-ml]'   # transformers + torch
+   ```
+   Configure the HF model id with `MUSIC_FLAMINGO_MODEL`
+   (default: `nvidia/audio-flamingo-3-hf`; use the `-chat` variant for
+   the instruction-tuned model).
+5. **Magenta RealTime** or **ElevenLabs Music** — optional generation
    for backing tracks and exercises. Wire-up lands in Phase 3.
 
 ## Configuration
@@ -122,11 +140,19 @@ The same workflow is exposed to the agent itself as the
 
 ## Phase plan
 
-* **Phase 1 (this PR)** — interfaces, models, config, Basic Pitch
-  adapter, librosa analysis baseline, `analyze_practice_take` tool +
+* **Phase 1** — interfaces, models, config, Basic Pitch adapter,
+  librosa analysis baseline, `analyze_practice_take` tool +
   `analyze-take` CLI, stubs for Omnizart / MT3 / Music Flamingo /
   Magenta RT / ElevenLabs Music, tests, docs.
-* **Phase 2** — real Omnizart, MT3, and Music Flamingo wiring.
+* **Phase 2 (this PR)** — real Omnizart, MT3, and Music Flamingo
+  adapters. Omnizart drives chord + beat ASR through
+  `omnizart.chord.app.ChordTranscription` and
+  `omnizart.beat.app.BeatTranscription` and parses their CSV outputs.
+  MT3 supports both a CLI subprocess (`JG_MT3_CLI`) and the upstream
+  `mt3.inference` python entry point. Music Flamingo loads
+  `AudioFlamingo3ForConditionalGeneration` + `AutoProcessor` via
+  `transformers`, applies the chat template, and scrapes
+  key/tempo/time-signature out of the free-text reply.
 * **Phase 3** — generation backends (Magenta RT, ElevenLabs Music),
-  backing-track workflows, deeper timing/pitch feedback, MusicXML
-  exercise generation.
+  backing-track workflows, onset-level timing feedback, per-note
+  intonation drift, MusicXML exercise generation.

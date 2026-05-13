@@ -184,6 +184,19 @@ class Settings(BaseSettings):
     music_analysis_backend: str = "librosa"
     music_understanding_backend: str = "none"
     music_generation_backend: str = "none"
+    # MT3 has no stable Python API. If set, JG_MT3_CLI is shelled out as
+    # `<cli> --input <audio> --output <midi>`; otherwise the adapter
+    # tries to import `mt3.inference` directly.
+    jg_mt3_cli: str = ""
+    # Hugging Face model id for the Music Flamingo backend. `-hf` is the
+    # base model; `-chat` is the instruction-tuned variant.
+    music_flamingo_model: str = "nvidia/audio-flamingo-3-hf"
+    music_flamingo_prompt: str = (
+        "Describe this music in detail. Include the most likely key, tempo (BPM), "
+        "time signature, style, and any notable structural sections. "
+        "Be concise but specific."
+    )
+    music_flamingo_max_new_tokens: int = 256
 
     # Feature flags
     feature_tts: int = 0
