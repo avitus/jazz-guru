@@ -259,9 +259,19 @@ async def _run_improvement_pass(session_id: uuid.UUID) -> None:
         spec = await store.get_spec(tool_name)
         if spec is None:
             continue
-        per_tool_threshold = int(
-            (spec.meta or {}).get("improve_threshold", default_threshold)
-        )
+        # ``improve_threshold`` is operator-controlled meta. A garbage value
+        # (string, None, etc.) shouldn't abort the entire reflexion pass
+        # — fall back to the global default and warn instead.
+        raw_threshold = (spec.meta or {}).get("improve_threshold", default_threshold)
+        try:
+            per_tool_threshold = max(1, int(raw_threshold))
+        except (TypeError, ValueError):
+            log.warning(
+                "reflexion.invalid_improve_threshold",
+                tool_name=tool_name,
+                value=raw_threshold,
+            )
+            per_tool_threshold = default_threshold
         if len(failures) < per_tool_threshold:
             continue
         await log_event(
