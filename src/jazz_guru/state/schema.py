@@ -8,6 +8,7 @@ from typing import Any
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -154,6 +156,102 @@ class GeneratedTool(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GeneratedToolVersion(Base):
+    """Historical snapshot of a generated_tools row.
+
+    Written by store.upsert BEFORE mutating the live row, so rollback is a
+    single-row read. ``version`` is the value generated_tools.version held at
+    snapshot time; ``superseded_by`` is the version number that replaced it
+    (NULL while this row is still the live one, though normally we snapshot
+    only when superseding).
+    """
+
+    __tablename__ = "generated_tool_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=_uuid)
+    tool_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("generated_tools.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(String(64))
+    input_schema: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    description: Mapped[str] = mapped_column(Text)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    origin: Mapped[str] = mapped_column(String(32), default="manual")
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    superseded_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tool_id", "version", name="uq_generated_tool_versions_tool_version"),
+    )
+
+
+class GeneratedToolTest(Base):
+    """One test case attached to a Tier-2 tool.
+
+    ``spec`` is the parsed YAML/JSON case+predicate+(optional)rubric described
+    in docs/plans/tier2-tool-tests-and-improvement.md §A.2. Cases run against
+    the live source via the same subprocess sandbox as the tool itself.
+    """
+
+    __tablename__ = "generated_tool_tests"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=_uuid)
+    tool_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("generated_tools.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(96))
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    origin: Mapped[str] = mapped_column(String(32), default="agent_authored")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tool_id", "name", name="uq_generated_tool_tests_tool_name"),
+    )
+
+
+class GeneratedToolTestRun(Base):
+    """One execution of one test case against one version of a tool.
+
+    Append-only log; never updated in place. ``tool_version`` records which
+    version was under test so historical runs remain interpretable after
+    later upserts/rollbacks.
+    """
+
+    __tablename__ = "generated_tool_test_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=_uuid)
+    tool_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("generated_tools.id", ondelete="CASCADE"), index=True
+    )
+    tool_version: Mapped[int] = mapped_column(Integer)
+    test_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("generated_tool_tests.id", ondelete="CASCADE"), index=True
+    )
+    passed: Mapped[bool] = mapped_column(Boolean)
+    output: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ms: Mapped[int] = mapped_column(Integer, default=0)
+    judge_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ran_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    __table_args__ = (
+        Index("ix_generated_tool_test_runs_tool_ran_at", "tool_id", "ran_at"),
     )
 
 
