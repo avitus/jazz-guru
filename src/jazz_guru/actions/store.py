@@ -134,6 +134,32 @@ async def list_all(*, scope: str | None = None, include_deprecated: bool = False
         return list(rows)
 
 
+async def get_spec(name: str) -> DynamicSpec | None:
+    """Convert one ``GeneratedTool`` row to a ``DynamicSpec`` or return None.
+
+    Used by the test runner and improver — both need to invoke a published
+    tool by name without going through the agent's session-scoped registry.
+    """
+    async with session_scope() as s:
+        row = (
+            await s.execute(select(GeneratedTool).where(GeneratedTool.name == name))
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        return DynamicSpec(
+            name=row.name,
+            description=row.description,
+            input_schema=row.input_schema or {},
+            source=row.source,
+            sha256=row.sha256,
+            execution=(row.meta or {}).get("execution", "subprocess"),
+            scope=row.scope,
+            owner_session_id=str(row.owner_session_id) if row.owner_session_id else None,
+            version=row.version,
+            meta=row.meta or {},
+        )
+
+
 async def load_all_specs() -> list[DynamicSpec]:
     """Load all non-deprecated global tools as ``DynamicSpec``s."""
     rows = await list_all(scope="global", include_deprecated=False)

@@ -170,6 +170,7 @@ def register_all() -> ToolRegistry:
         render,
         shell,
         tool_meta,
+        tool_test_meta,
         tts,
         vision,
         web_search,

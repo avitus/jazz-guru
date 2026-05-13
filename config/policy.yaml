@@ -28,6 +28,12 @@ tools:
   tool_list_dynamic:     { mode: allow }
   tool_inspect:          { mode: allow }
 
+  # --- meta-tools: Tier-2 tool tests --------------------------------------
+  tool_test_add:    { mode: allow }
+  tool_test_remove: { mode: allow }
+  tool_test_list:   { mode: allow }
+  tool_test_run:    { mode: allow }
+
 # Loose toolset bundling. Resolution order in Policy.for_tool:
 #   per-name `tools.<name>` entry  ->  toolset that contains the name  ->  default.
 # Per-tool entries above already exist for every built-in; the toolsets section
@@ -43,6 +49,7 @@ toolsets:
   audio:   { tools: [audio_analyze, tts], mode: allow }
   vision:  { tools: [vision], mode: allow }
   meta:    { tools: [tool_create, tool_publish, tool_remove, tool_promote_to_source, tool_list_dynamic, tool_inspect], mode: allow }
+  testing: { tools: [tool_test_add, tool_test_remove, tool_test_list, tool_test_run], mode: allow }
 
 budgets:
   per_turn:
