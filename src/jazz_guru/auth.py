@@ -17,14 +17,14 @@ def _api_key() -> str | None:
 
 _EXEMPT_EXACT = {
     "/", "/health", "/docs", "/redoc", "/openapi.json", "/favicon.ico",
-    "/ui", "/static",
+    "/ui", "/static", "/user_manual",
 }
 
 
 def _exempt(path: str) -> bool:
     # Exact-match the bare paths plus prefix-match the trailing-slash variants
     # so we don't accidentally exempt e.g. /uiadmin.
-    return path in _EXEMPT_EXACT or path.startswith(("/ui/", "/static/"))
+    return path in _EXEMPT_EXACT or path.startswith(("/ui/", "/static/", "/user_manual/"))
 
 
 def install(app: FastAPI) -> None:

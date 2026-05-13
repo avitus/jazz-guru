@@ -1,0 +1,1705 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>jazz-guru · user manual</title>
+<link rel="stylesheet" href="./manual.css" />
+<link rel="icon" href="/ui/favicon.svg" type="image/svg+xml" />
+<meta name="description" content="Human-readable manual for the jazz-guru agent harness: architecture, tools, memory, reflexion, eval, audio rendering, configuration, observability, server surface." />
+</head>
+<body>
+
+<header class="topbar">
+  <button id="toc-toggle" class="toc-toggle" aria-label="toggle table of contents">☰ contents</button>
+  <span class="brand">jazz-guru</span>
+  <span class="crumb">user manual</span>
+  <span class="grow"></span>
+  <nav class="links">
+    <a href="/">api index</a>
+    <a href="/ui/">web ui</a>
+    <a href="/docs">openapi</a>
+    <a href="/user_manual/architecture.pdf">arch · pdf</a>
+  </nav>
+</header>
+
+<div class="layout">
+
+<!-- ============================ TABLE OF CONTENTS ============================ -->
+<aside id="toc" class="toc" aria-label="table of contents">
+  <p class="toc-label">contents</p>
+  <ol>
+    <li><a href="#intro"><span class="num">00</span>Introduction</a></li>
+    <li><a href="#overview"><span class="num">01</span>System overview</a></li>
+    <li><a href="#turn"><span class="num">02</span>Turn lifecycle</a></li>
+    <li><a href="#core"><span class="num">03</span>Agent core internals</a></li>
+    <li><a href="#tools"><span class="num">04</span>Tool system &amp; catalogue</a></li>
+    <li><a href="#dynamic"><span class="num">05</span>Dynamic tools (3 tiers)</a></li>
+    <li><a href="#db"><span class="num">06</span>Database schema</a></li>
+    <li><a href="#memory"><span class="num">07</span>Memory subsystem</a></li>
+    <li><a href="#reflexion"><span class="num">08</span>Distillation / Reflexion</a></li>
+    <li><a href="#eval"><span class="num">09</span>Eval / regression suite</a></li>
+    <li><a href="#audio"><span class="num">10</span>Audio rendering pipeline</a></li>
+    <li><a href="#config"><span class="num">11</span>Configuration sources</a></li>
+    <li><a href="#obs"><span class="num">12</span>Observability</a></li>
+    <li><a href="#fs"><span class="num">13</span>Filesystem &amp; sandbox</a></li>
+    <li><a href="#server"><span class="num">14</span>Server surface &amp; clients</a></li>
+    <li><a href="#mcp"><span class="num">15</span>MCP &amp; subagents</a></li>
+    <li><a href="#reference"><span class="num">16</span>Reference</a></li>
+  </ol>
+</aside>
+
+<!-- =============================== MAIN CONTENT ============================== -->
+<main class="content">
+
+<div class="hero">
+  <div class="pill-row">
+    <span class="pill accent">python 3.12</span>
+    <span class="pill">FastAPI · uvicorn</span>
+    <span class="pill">anthropic claude</span>
+    <span class="pill">postgres + pgvector</span>
+    <span class="pill">redis · rq (optional)</span>
+    <span class="pill ok">no docker</span>
+  </div>
+  <h1>jazz-guru · user manual</h1>
+  <p class="tagline">
+    A walk through the architecture of a local Claude agent harness for music + text work
+    &mdash; MusicXML, MIDI, WAV. Every concept maps to a file you can open;
+    every diagram maps to code you can run.
+  </p>
+  <p class="cite">
+    Companion to <a href="/user_manual/architecture.pdf">docs/architecture.pdf</a>
+    and <code>CLAUDE.md</code>. Rendered live from the running server at
+    <code>/user_manual/</code>.
+  </p>
+</div>
+
+<!-- ===== 00 INTRO ===== -->
+<section id="intro" class="s">
+  <h2><span class="num">00</span>Introduction</h2>
+  <p class="lede">
+    jazz-guru is a local agent. You run it on your laptop, point it at a Claude API key, and
+    it composes, arranges, analyzes, and discusses music with you across long-running
+    sessions that remember what worked.
+  </p>
+
+  <h3>What it is, in one paragraph</h3>
+  <p>
+    The agent is a Python package distributed as three console scripts &mdash;
+    <code>jazz-guru</code> (CLI), <code>jazz-guru-server</code> (FastAPI + WebSocket),
+    and <code>jazz-guru-worker</code> (RQ worker for offline reflexion). It uses
+    Anthropic Claude as its reasoner, Postgres + pgvector for durable state and
+    semantic memory, and a handful of host binaries (FluidSynth, sfizz, liquidsfz,
+    ffmpeg) for audio rendering. There is no Docker; everything runs out of a
+    <code>.venv</code> on the host.
+  </p>
+
+  <h3>Why it exists</h3>
+  <p>
+    Off-the-shelf chat clients forget. They cannot author their own tools, cannot
+    rehearse against a regression suite, cannot pour what they learned in last
+    week's session into next week's. jazz-guru does all of that. The goal is not
+    "another LLM wrapper" &mdash; it is a small, observable harness where every
+    perception, plan, action, and observation goes into a JSONL trace and a
+    Postgres event log you can replay, judge, and learn from.
+  </p>
+
+  <h3>Quick start</h3>
+  <pre><code>make setup        # brew deps + venv + DB + alembic
+make migrate      # alembic upgrade head
+make server       # FastAPI + websocket on 127.0.0.1:8000
+make worker       # optional: RQ worker (needs Redis)
+
+.venv/bin/jazz-guru info             # show resolved config
+.venv/bin/jazz-guru new-session       # &rarr; UUID
+.venv/bin/jazz-guru chat "hello"      # one-shot chat
+.venv/bin/jazz-guru tui               # Textual UI (server must be running)</code></pre>
+
+  <div class="callout note">
+    <span class="ico">i</span>
+    <div>
+      <p><strong>What this manual covers.</strong> Sixteen sections that mirror the
+      architecture PDF page-for-page, plus a short reference appendix. Each
+      section opens with a one-line summary, links to the actual source files,
+      and explains the design decisions behind what you'll see in the code.</p>
+    </div>
+  </div>
+
+  <h3>How to read this manual</h3>
+  <ul>
+    <li><strong>Skim first.</strong> The system overview (&sect;1) gives you the
+        thirty-second tour. Stop there if you only want a mental model.</li>
+    <li><strong>Trace one turn.</strong> The turn lifecycle (&sect;2) walks a
+        single chat message all the way through &mdash; the most useful section
+        for figuring out where to set a breakpoint.</li>
+    <li><strong>Then drill.</strong> The remaining sections cover individual
+        subsystems and stand alone; jump to whatever you're hacking on.</li>
+  </ul>
+</section>
+
+<!-- ===== 01 SYSTEM OVERVIEW ===== -->
+<section id="overview" class="s">
+  <h2><span class="num">01</span>System overview</h2>
+  <p class="lede">
+    Clients invoke the FastAPI server; the server drives the agent loop; each
+    turn touches Postgres, the workspace filesystem, and external services.
+  </p>
+
+  <div class="diagram">
+<svg viewBox="0 0 860 460" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="system overview">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa1ad"/>
+    </marker>
+    <style>
+      .ttl { fill:#e7e9ee; font: 600 12px system-ui, sans-serif; }
+      .sub { fill:#9aa1ad; font: 11px ui-monospace, Menlo, monospace; }
+      .box { fill:#16181d; stroke:#262932; }
+      .acc { stroke:#9b8cff; }
+      .ok { stroke:#58e1c2; }
+      .warn { stroke:#f1a76b; }
+      .line { stroke:#9aa1ad; stroke-width:1.4; fill:none; }
+      .lbl { fill:#9aa1ad; font: 10px ui-monospace, monospace; }
+    </style>
+  </defs>
+
+  <!-- clients column -->
+  <g transform="translate(20,30)">
+    <text class="sub" x="0" y="-10">CLIENTS</text>
+    <rect class="box acc" x="0" y="0" width="180" height="50" rx="8"/>
+    <text class="ttl" x="12" y="22">CLI · jazz-guru</text>
+    <text class="sub" x="12" y="38">chat · distill · evalrun</text>
+
+    <rect class="box acc" x="0" y="65" width="180" height="50" rx="8"/>
+    <text class="ttl" x="12" y="87">Textual TUI</text>
+    <text class="sub" x="12" y="103">mic capture · live events</text>
+
+    <rect class="box acc" x="0" y="130" width="180" height="50" rx="8"/>
+    <text class="ttl" x="12" y="152">Static web UI · /ui/</text>
+    <text class="sub" x="12" y="168">web/static/</text>
+
+    <rect class="box acc" x="0" y="195" width="180" height="50" rx="8"/>
+    <text class="ttl" x="12" y="217">SDK · client/sdk.py</text>
+    <text class="sub" x="12" y="233">HTTP + WS streaming</text>
+
+    <rect class="box acc" x="0" y="260" width="180" height="50" rx="8"/>
+    <text class="ttl" x="12" y="282">Trace viewer · :8765</text>
+    <text class="sub" x="12" y="298">tails traces/*.jsonl</text>
+  </g>
+
+  <!-- server -->
+  <g transform="translate(240,40)">
+    <rect class="box" x="0" y="0" width="360" height="120" rx="10"/>
+    <text class="ttl" x="14" y="22">FastAPI server · server.py</text>
+    <text class="sub" x="14" y="38">uvicorn @ 127.0.0.1:8000</text>
+    <text class="sub" x="14" y="58">/sessions · /chat · WS · /distill · /eval/run</text>
+    <text class="sub" x="14" y="74">/memory/search · /uploads · /artifacts · /ui</text>
+    <text class="sub" x="14" y="92">auth.py · optional X-API-Key middleware</text>
+    <text class="sub" x="14" y="108">(active iff JG_API_KEY set)</text>
+  </g>
+
+  <!-- agent core -->
+  <g transform="translate(240,180)">
+    <rect class="box ok" x="0" y="0" width="360" height="120" rx="10"/>
+    <text class="ttl" x="14" y="22">Agent core · harness/loop.py</text>
+    <text class="sub" x="14" y="40">AgentLoop.step()</text>
+    <text class="sub" x="14" y="58">perceive · plan · act · observe</text>
+    <text class="sub" x="14" y="76">ContextBuilder · ActionController</text>
+    <text class="sub" x="14" y="92">DynamicRegistry hydration per turn</text>
+    <text class="sub" x="14" y="108">emits llm/tool/memory/reflexion events</text>
+  </g>
+
+  <!-- tools -->
+  <g transform="translate(240,320)">
+    <rect class="box warn" x="0" y="0" width="172" height="100" rx="10"/>
+    <text class="ttl" x="14" y="22">Tools · actions/</text>
+    <text class="sub" x="14" y="40">ToolRegistry (global)</text>
+    <text class="sub" x="14" y="56">DynamicRegistry (per-session)</text>
+    <text class="sub" x="14" y="72">41 built-ins · 3-tier dynamic</text>
+    <text class="sub" x="14" y="88">policy filter + sandbox</text>
+  </g>
+
+  <!-- persistence -->
+  <g transform="translate(428,320)">
+    <rect class="box" x="0" y="0" width="172" height="100" rx="10"/>
+    <text class="ttl" x="14" y="22">Persistence</text>
+    <text class="sub" x="14" y="40">Postgres + pgvector</text>
+    <text class="sub" x="14" y="56">8 tables (alembic)</text>
+    <text class="sub" x="14" y="72">workspace/ · traces · state</text>
+    <text class="sub" x="14" y="88">Redis + RQ (optional)</text>
+  </g>
+
+  <!-- external -->
+  <g transform="translate(640,40)">
+    <text class="sub" x="0" y="-10">EXTERNAL</text>
+    <rect class="box" x="0" y="0" width="180" height="80" rx="8"/>
+    <text class="ttl" x="12" y="22">Anthropic Claude</text>
+    <text class="sub" x="12" y="40">messages.create</text>
+    <text class="sub" x="12" y="56">via llm.complete()</text>
+    <text class="sub" x="12" y="72">tool_use enabled</text>
+
+    <rect class="box" x="0" y="95" width="180" height="60" rx="8"/>
+    <text class="ttl" x="12" y="117">Voyage AI · embeddings</text>
+    <text class="sub" x="12" y="133">optional · hash-stub fallback</text>
+    <text class="sub" x="12" y="149">tests rely on stub</text>
+
+    <rect class="box" x="0" y="170" width="180" height="60" rx="8"/>
+    <text class="ttl" x="12" y="192">Web Search API</text>
+    <text class="sub" x="12" y="208">web_search tool</text>
+    <text class="sub" x="12" y="224">optional</text>
+
+    <rect class="box" x="0" y="245" width="180" height="80" rx="8"/>
+    <text class="ttl" x="12" y="267">FluidSynth · sfizz · liquidsfz</text>
+    <text class="sub" x="12" y="283">audio engines (host binaries)</text>
+    <text class="sub" x="12" y="299">ffmpeg post-process chain</text>
+    <text class="sub" x="12" y="315">brew-installed</text>
+  </g>
+
+  <!-- arrows -->
+  <path class="line" d="M200 55 L240 90" marker-end="url(#arr)"/>
+  <path class="line" d="M200 90 L240 100" marker-end="url(#arr)"/>
+  <path class="line" d="M200 285 L240 240" marker-end="url(#arr)"/>
+  <path class="line" d="M420 160 L420 180" marker-end="url(#arr)"/>
+  <path class="line" d="M420 300 L420 320" marker-end="url(#arr)"/>
+  <path class="line" d="M600 200 L640 90" marker-end="url(#arr)"/>
+  <path class="line" d="M600 240 L640 200" marker-end="url(#arr)"/>
+  <path class="line" d="M514 320 L640 280" marker-end="url(#arr)"/>
+</svg>
+    <div class="caption">Bird's-eye view. Clients hit the server; the server drives the agent core; the core leans on tools, persistence, and external services.</div>
+  </div>
+
+  <h3>Five moving parts</h3>
+  <dl class="def">
+    <dt>clients</dt>
+    <dd>Anything that speaks to <code>127.0.0.1:8000</code> &mdash; the CLI, the
+        Textual TUI, the static web UI at <code>/ui/</code>, a typed Python
+        SDK, the trace viewer, or your own HTTP client. The server is what gives
+        them all a uniform surface.</dd>
+    <dt>FastAPI server</dt>
+    <dd>One file: <span class="file">src/jazz_guru/<b>server.py</b></span>. Hosts
+        the REST routes, the WebSocket for streaming turn events, the static UI,
+        and an optional <code>X-API-Key</code> middleware. The lifespan handler
+        also starts/stops the MCP manager.</dd>
+    <dt>agent core</dt>
+    <dd>The textbook perceive → plan → act → observe loop, in
+        <span class="file">src/jazz_guru/harness/<b>loop.py</b></span>. One call
+        to <code>AgentLoop.step()</code> is one user turn. Sections 2–3 walk it
+        in detail.</dd>
+    <dt>tools &amp; sandbox</dt>
+    <dd>Every action the agent can take is a registered tool in
+        <span class="file">src/jazz_guru/actions/tools/</span>. The agent can
+        also <em>author its own</em> tools via the meta-tools &mdash; see
+        <a href="#dynamic">&sect;5</a>.</dd>
+    <dt>persistence</dt>
+    <dd>Postgres + <code>pgvector</code> for sessions, turns, events, memory,
+        playbook, generated tools, eval runs. The <code>workspace/</code>
+        directory holds session artifacts, dynamic tool source, state snapshots
+        and JSONL traces. Redis + RQ are <em>optional</em> &mdash; only needed
+        for async reflexion.</dd>
+  </dl>
+
+  <h3>External dependencies</h3>
+  <ul>
+    <li><strong>Anthropic Claude</strong> &mdash; reached through
+        <span class="file">src/jazz_guru/<b>llm.py</b></span>, which wraps the
+        SDK with tenacity retries on <code>ConnectionError</code>, <code>Timeout</code>,
+        429 and 5xx, and accumulates token / cost usage into <code>LLMUsage</code>.</li>
+    <li><strong>Voyage AI embeddings</strong> &mdash; only when
+        <code>VOYAGE_API_KEY</code> is set. With it blank, the memory store
+        falls back to a deterministic <code>sha256</code>-derived float32 vector
+        of the configured dimension. This is what the test suite uses; no
+        network in CI.</li>
+    <li><strong>Web Search API</strong> &mdash; backs the <code>web_search</code>
+        tool.</li>
+    <li><strong>Audio engines</strong> &mdash; FluidSynth, sfizz, liquidsfz, and
+        ffmpeg, all brew-installed. <code>render_midi</code> dispatches to
+        whichever one a preset names.</li>
+  </ul>
+</section>
+
+<!-- ===== 02 TURN LIFECYCLE ===== -->
+<section id="turn" class="s">
+  <h2><span class="num">02</span>Turn lifecycle</h2>
+  <p class="lede">
+    What actually happens when the user sends one chat message. Useful as a
+    breakpoint guide: every step here corresponds to a callable you can step
+    into.
+  </p>
+
+  <h3>One <code>AgentLoop.step(message)</code> call, end to end</h3>
+  <ol>
+    <li><strong>Record the user turn.</strong> A <code>Turn</code> row with
+        <code>role='user'</code> is inserted into Postgres. The async DB session
+        is acquired through <code>db.session_scope()</code>.</li>
+    <li><strong>Perceive.</strong> Three reads in parallel-ish:
+      <ul>
+        <li><code>memory.search(query, k=retrieve_k, session_id=...)</code>
+            against <code>memory_items</code> with a pgvector cosine query.</li>
+        <li>Top-N <code>PlaybookEntry</code> rows by <code>score</code> &mdash;
+            global strategies refined by reflexion (<a href="#reflexion">&sect;8</a>).</li>
+        <li><code>state.load_latest(sid)</code> &mdash; reads
+            <code>workspace/state/&lt;sid&gt;/latest.json</code> and walks
+            <code>workspace/sessions/&lt;sid&gt;/</code> to enumerate artifacts.</li>
+      </ul>
+    </li>
+    <li><strong>Plan.</strong> <code>ContextBuilder.build(...)</code> assembles
+        the system prompt by concatenating:
+        <span class="file"><b>goal.md</b></span> +
+        <span class="file"><b>goal.yaml</b></span> +
+        <em>_TOOL_CREATION_HINT</em> + <code>StateDoc.render_markdown()</code> +
+        playbook entries + retrieved memory + (rolling-history summary).</li>
+    <li><strong>Hydrate dynamic tools.</strong>
+        <code>tool_store.load_all_specs()</code> pulls all globally-published
+        rows from <code>generated_tools</code> into this session's
+        <code>DynamicRegistry</code>, which is merged with the static registry.
+        <code>ActionController.allowed</code> is recomputed against the merged
+        view through the policy filter.</li>
+    <li><strong>Act / observe.</strong>
+        <code>ActionController.run(messages, tools, on_event)</code> drives the
+        Anthropic <code>tool_use</code> loop. Each round:
+      <ol>
+        <li><code>llm.complete(system, messages, tools, tool_choice='auto')</code>
+            and emit <code>llm_request</code> / <code>llm_response</code>.</li>
+        <li>If <code>stop_reason != 'tool_use'</code>, return.</li>
+        <li>For each <code>tool_use</code> block: emit <code>tool_use</code>,
+            invoke the tool through the merged registry, append the result to
+            <code>messages</code>, emit <code>tool_result</code>.</li>
+        <li>Check the budget. <code>policy.budgets.per_turn.tool_calls</code>
+            doubles as <code>max_rounds</code>.</li>
+      </ol>
+    </li>
+    <li><strong>Persist + reply.</strong> Insert an <code>assistant</code>
+        <code>Turn</code> row plus <code>Event</code> rows. Write a summary
+        <code>MemoryItem</code> for the exchange. Write
+        <code>workspace/state/&lt;sid&gt;/latest.json</code>. Emit
+        <code>turn_end</code>. Return the response to the caller.</li>
+  </ol>
+
+  <div class="diagram">
+<svg viewBox="0 0 860 540" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="turn lifecycle">
+  <defs>
+    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9b8cff"/>
+    </marker>
+    <style>
+      .lane { fill:#9aa1ad; font: 600 11px ui-monospace, Menlo, monospace; letter-spacing:.6px; }
+      .laneCol { stroke:#262932; stroke-dasharray:3 3; }
+      .ev { fill:#16181d; stroke:#9b8cff; }
+      .evt { fill:#e7e9ee; font: 600 11px ui-monospace, Menlo, monospace; }
+      .evd { fill:#9aa1ad; font: 10.5px ui-monospace, Menlo, monospace; }
+      .arrL { stroke:#9b8cff; stroke-width:1.4; fill:none; }
+    </style>
+  </defs>
+
+  <!-- lane labels -->
+  <g>
+    <line class="laneCol" x1="100" y1="40" x2="100" y2="510"/>
+    <line class="laneCol" x1="260" y1="40" x2="260" y2="510"/>
+    <line class="laneCol" x1="430" y1="40" x2="430" y2="510"/>
+    <line class="laneCol" x1="590" y1="40" x2="590" y2="510"/>
+    <line class="laneCol" x1="740" y1="40" x2="740" y2="510"/>
+    <text class="lane" x="40" y="30">CLIENT</text>
+    <text class="lane" x="130" y="30">SERVER</text>
+    <text class="lane" x="290" y="30">AGENTLOOP</text>
+    <text class="lane" x="445" y="30">ACTIONCTRL</text>
+    <text class="lane" x="610" y="30">LLM/TOOLS</text>
+    <text class="lane" x="755" y="30">DB / FS</text>
+  </g>
+
+  <!-- steps -->
+  <g transform="translate(0,60)">
+    <rect class="ev" x="14" y="0" width="170" height="36" rx="6"/>
+    <text class="evt" x="22" y="16">POST /chat</text>
+    <text class="evd" x="22" y="30">{ message }</text>
+    <path class="arrL" d="M184 18 L260 18" marker-end="url(#arr2)"/>
+
+    <rect class="ev" x="260" y="0" width="160" height="36" rx="6"/>
+    <text class="evt" x="270" y="16">step(message)</text>
+    <text class="evd" x="270" y="30">insert user Turn</text>
+    <path class="arrL" d="M420 18 L740 18" marker-end="url(#arr2)"/>
+  </g>
+
+  <g transform="translate(0,110)">
+    <rect class="ev" x="260" y="0" width="160" height="50" rx="6"/>
+    <text class="evt" x="270" y="16">perceive</text>
+    <text class="evd" x="270" y="30">memory.search()</text>
+    <text class="evd" x="270" y="44">+ playbook + state</text>
+    <path class="arrL" d="M420 24 L740 24" marker-end="url(#arr2)"/>
+  </g>
+
+  <g transform="translate(0,180)">
+    <rect class="ev" x="260" y="0" width="160" height="50" rx="6"/>
+    <text class="evt" x="270" y="16">plan</text>
+    <text class="evd" x="270" y="30">build_context()</text>
+    <text class="evd" x="270" y="44">hydrate dyn registry</text>
+  </g>
+
+  <g transform="translate(0,250)">
+    <rect class="ev" x="430" y="0" width="160" height="50" rx="6"/>
+    <text class="evt" x="440" y="16">controller.run</text>
+    <text class="evd" x="440" y="30">tool_use loop</text>
+    <text class="evd" x="440" y="44">max_rounds = budget</text>
+    <path class="arrL" d="M590 24 L740 24" marker-end="url(#arr2)"/>
+  </g>
+
+  <g transform="translate(0,320)">
+    <rect class="ev" x="590" y="0" width="160" height="50" rx="6"/>
+    <text class="evt" x="600" y="16">messages.create</text>
+    <text class="evd" x="600" y="30">tool_use blocks</text>
+    <text class="evd" x="600" y="44">emit llm_*</text>
+    <path class="arrL" d="M590 24 L430 24" marker-start="url(#arr2)"/>
+  </g>
+
+  <g transform="translate(0,390)">
+    <rect class="ev" x="430" y="0" width="320" height="50" rx="6"/>
+    <text class="evt" x="440" y="16">dispatch tool / tool_result</text>
+    <text class="evd" x="440" y="30">fs · shell · render · http · dyn</text>
+    <text class="evd" x="440" y="44">emit tool_use / tool_result</text>
+  </g>
+
+  <g transform="translate(0,460)">
+    <rect class="ev" x="260" y="0" width="160" height="40" rx="6"/>
+    <text class="evt" x="270" y="16">persist + reply</text>
+    <text class="evd" x="270" y="30">Turn · memory · snapshot</text>
+    <path class="arrL" d="M260 18 L100 18" marker-end="url(#arr2)"/>
+  </g>
+</svg>
+    <div class="caption">Each step emits an event; subscribers fan it out to JSONL traces, the WebSocket, and the Postgres event log.</div>
+  </div>
+
+  <div class="callout note">
+    <span class="ico">i</span>
+    <div>
+      <p><strong>Where to set a breakpoint.</strong> If you're chasing a bug in
+      tool dispatch, start at <code>ActionController.run</code> in
+      <span class="file">actions/<b>controller.py</b></span>. If you're chasing a
+      bug in what the model sees, start at <code>ContextBuilder.build</code> in
+      <span class="file">context/<b>builder.py</b></span>. If you're chasing a
+      memory/playbook regression, start at <code>AgentLoop._retrieve_memory</code>
+      in <span class="file">harness/<b>loop.py</b></span>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 03 AGENT CORE ===== -->
+<section id="core" class="s">
+  <h2><span class="num">03</span>Agent core internals</h2>
+  <p class="lede">
+    Four collaborators inside the loop: the loop itself, the context builder, the
+    action controller, and the LLM wrapper. Every chat-style call passes through
+    this seam.
+  </p>
+
+  <h3>The loop &mdash; <span class="file">harness/<b>loop.py</b></span></h3>
+  <p>
+    <code>AgentLoop</code> holds the long-lived per-session state: the
+    <code>SessionHandle</code>, the <code>TraceWriter</code>, the
+    <code>DynamicRegistry</code>, a <code>BackgroundJobRegistry</code>
+    (renders started in turn 1 must remain inspectable in turn 5), the
+    <code>ActionController</code>, and the <code>MemoryStore</code>. Constructor
+    arguments let tests inject mocks. <code>step()</code> is the only method
+    callers should reach for.
+  </p>
+
+  <h3>Context builder &mdash; <span class="file">context/<b>builder.py</b></span></h3>
+  <p>
+    Given a <code>BuildInputs</code> bundle (goal, state doc, playbook entries,
+    memory hits, history), the builder produces the final
+    <code>(system, messages)</code> pair handed to <code>llm.complete</code>.
+    The system prompt is laid out as:
+  </p>
+
+  <div class="flow">
+    GoalConfig.render_system_block() <span class="arrow">+</span>
+    _TOOL_CREATION_HINT <span class="arrow">+</span>
+    StateDoc.render_markdown() <span class="arrow">+</span>
+    playbook (top-N) <span class="arrow">+</span>
+    retrieved memory <span class="arrow">+</span>
+    history summary
+  </div>
+
+  <p>
+    The <em>tool-creation hint</em> is the only static block we bake into the
+    prompt; it tells the model how to use <code>tool_create</code> /
+    <code>tool_publish</code> / <code>tool_promote_to_source</code>. Everything
+    else is configurable through <code>config/goal.{md,yaml}</code>.
+  </p>
+
+  <h3>Action controller &mdash; <span class="file">actions/<b>controller.py</b></span></h3>
+  <p>
+    The controller owns three responsibilities: filtering the merged tool
+    registry against policy, running the <code>tool_use</code> loop against the
+    Anthropic API, and emitting events. The filtering looks like:
+  </p>
+  <pre><code>for spec in registry.specs():
+    p = policy.for_tool(spec.name)
+    if p.mode != 'allow':
+        drop
+    elif p.feature_flag and not os.getenv(p.feature_flag):
+        drop
+    else:
+        keep</code></pre>
+  <p>
+    The result is the <code>tools=[...]</code> JSON-schema list handed to
+    Claude. The loop runs at most
+    <code>policy.budgets.per_turn.tool_calls</code> rounds, then bails with an
+    <code>error</code> event if the model still wants to keep calling tools.
+  </p>
+
+  <h3>LLM wrapper &mdash; <span class="file"><b>llm.py</b></span></h3>
+  <p>
+    A thin wrapper over the Anthropic SDK. It exists for three reasons:
+  </p>
+  <ul>
+    <li><strong>Retries.</strong> Tenacity wraps the call with exponential
+        backoff on <code>ConnectionError</code>, <code>Timeout</code>, 429, and 5xx.</li>
+    <li><strong>Usage accounting.</strong> Every call accumulates an
+        <code>LLMUsage</code> record (input tokens, output tokens, USD cost). The
+        loop sums these into the <code>Turn</code> row.</li>
+    <li><strong>Feature pass-through.</strong> Extended thinking, streaming,
+        tool_choice, and similar SDK options pass through verbatim.</li>
+  </ul>
+
+  <div class="callout tip">
+    <span class="ico">✓</span>
+    <div>
+      <p><strong>If you want to change which model is used,</strong> set
+      <code>ANTHROPIC_MODEL</code> in <code>.env</code>. The harness defaults to
+      a modern Claude; older retired models are not auto-replaced.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 04 TOOL SYSTEM ===== -->
+<section id="tools" class="s">
+  <h2><span class="num">04</span>Tool system &amp; catalogue</h2>
+  <p class="lede">
+    A process-global <code>ToolRegistry</code> is merged each turn with a
+    per-session <code>DynamicRegistry</code>, then filtered by policy and
+    dispatched by the controller.
+  </p>
+
+  <h3>The static registry</h3>
+  <p>
+    Tools are Python functions registered through a decorator:
+  </p>
+  <pre><code>@registry.register(
+    name="fs_read",
+    description="Read a UTF-8 text file from the session workspace.",
+    input_model=FsReadInput,
+)
+async def fs_read(**kwargs) -&gt; dict:
+    ...</code></pre>
+  <p>
+    <code>register_all()</code> in <span class="file">actions/<b>registry.py</b></span>
+    imports every module under <code>actions/tools/</code>; the decorators fire
+    and the registry is populated. It's idempotent &mdash; safe to call from
+    tests.
+  </p>
+
+  <h3>Built-in catalogue</h3>
+  <p>
+    The current install ships with the tools below. They are organised loosely
+    into families; the policy file lets you flip whole families on or off via
+    <code>toolsets</code>.
+  </p>
+
+  <div class="table-wrap">
+  <table class="tbl">
+    <thead><tr><th>Family</th><th>Tools</th><th>What they do</th></tr></thead>
+    <tbody>
+      <tr><td>filesystem</td>
+          <td><code>fs_read</code>, <code>fs_write</code>, <code>fs_list</code></td>
+          <td>Workspace-scoped reads, writes, and listings. Refuses paths outside the session.</td></tr>
+      <tr><td>shell / python</td>
+          <td><code>shell</code>, <code>python_exec</code></td>
+          <td>Subprocess escape hatches. Sandbox-wrapped when <code>JG_OS_SANDBOX=1</code>.</td></tr>
+      <tr><td>code editing</td>
+          <td><code>code_gen</code>, <code>code_edit</code>, <code>patch</code></td>
+          <td>Generate, find-and-replace, or multi-strategy patch files.</td></tr>
+      <tr><td>network</td>
+          <td><code>http_get</code>, <code>http_post</code>, <code>web_search</code></td>
+          <td>SSRF-guarded HTTP plus web search.</td></tr>
+      <tr><td>music · symbolic</td>
+          <td><code>music_xml_info</code>, <code>music_xml_from_tinynotation</code>, <code>music_xml_transpose</code>, <code>midi_info</code>, <code>midi_from_notes</code></td>
+          <td>Inspect, build, transpose MusicXML; inspect and build MIDI.</td></tr>
+      <tr><td>music · render &amp; presets</td>
+          <td><code>render_midi</code>, <code>preset_list</code>, <code>preset_get</code>, <code>preset_upsert</code>, <code>preset_delete</code></td>
+          <td>MIDI&rarr;WAV through FluidSynth / sfizz / liquidsfz, ffmpeg post chain, agent-mutable preset surface.</td></tr>
+      <tr><td>perception</td>
+          <td><code>audio_analyze</code>, <code>vision</code>, <code>tts</code></td>
+          <td>librosa-based audio analysis, image understanding via vision, optional TTS (<code>FEATURE_TTS=1</code>).</td></tr>
+      <tr><td>meta · self-authoring</td>
+          <td><code>tool_create</code>, <code>tool_publish</code>, <code>tool_promote_to_source</code>, <code>tool_remove</code>, <code>tool_list_dynamic</code>, <code>tool_inspect</code></td>
+          <td>The dynamic-tool surface. See <a href="#dynamic">&sect;5</a>.</td></tr>
+      <tr><td>notes</td>
+          <td><code>notes_read</code>, <code>notes_write</code>, <code>notes_patch</code></td>
+          <td>Always-loaded persistent facts (<code>AGENT_NOTES.md</code>).</td></tr>
+      <tr><td>productivity</td>
+          <td><code>process</code>, <code>todo</code>, <code>clarify</code>, <code>session_search</code></td>
+          <td>Multi-step bookkeeping, todo lists, interactive clarifications, prior-session search.</td></tr>
+      <tr><td>skills</td>
+          <td><code>skills_list</code>, <code>skill_view</code>, <code>skill_manage</code></td>
+          <td>SKILL.md procedural-memory surface.</td></tr>
+      <tr><td>subagent</td>
+          <td><code>delegate_task</code></td>
+          <td>Spawn a child agent for an isolated sub-task. See <a href="#mcp">&sect;15</a>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="cite">
+    Authoritative list: <code>.venv/bin/jazz-guru tools</code>. Source files:
+    <code>src/jazz_guru/actions/tools/</code>.
+  </p>
+
+  <h3>Policy filter &mdash; <span class="file">config/<b>policy.yaml</b></span></h3>
+  <p>
+    The policy file is the agent's permission system. Three things live there:
+  </p>
+  <dl class="def">
+    <dt>per-tool entries</dt>
+    <dd>Each tool can set <code>mode: allow|deny</code>, a <code>scope</code>
+        hint, a <code>timeout_sec</code>, a memory cap, a max response size, and
+        a <code>feature_flag</code> env-var gate.</dd>
+    <dt>toolsets</dt>
+    <dd>Named groups (<code>core</code>, <code>fs</code>, <code>shell</code>,
+        <code>web</code>, <code>code</code>, <code>music</code>, <code>audio</code>,
+        <code>vision</code>, <code>meta</code>). Per-name entries always win.</dd>
+    <dt>budgets</dt>
+    <dd><code>per_turn.tool_calls</code> &mdash; doubles as the controller's
+        <code>max_rounds</code>. <code>per_turn.wall_clock_sec</code>,
+        <code>per_session.tokens</code>, <code>per_session.usd</code>.</dd>
+  </dl>
+
+  <h3>Sandbox helpers &mdash; <span class="file">actions/sandbox/</span></h3>
+  <ul>
+    <li><code>resolve_in_workspace(path, sid)</code> &mdash; strict: only paths
+        inside <code>workspace/sessions/&lt;sid&gt;/</code>. Use this for any
+        <em>write</em> and any user-supplied path that should stay
+        session-scoped.</li>
+    <li><code>resolve_in_safe(path, sid)</code> &mdash; read-oriented: same
+        plus <code>data/</code> plus <code>JG_SAFE_EXTRA_PATHS</code>. Use this
+        for tools that legitimately read project data (e.g. preset lookups).</li>
+  </ul>
+
+  <h3>ToolContext &mdash; <span class="file">actions/<b>context.py</b></span></h3>
+  <p>
+    Tools never receive the session id as a function argument. Instead, the
+    controller stashes <code>session_id</code> and <code>turn_idx</code> in a
+    <code>contextvar</code> before invoking each tool; <code>current()</code>
+    reads them back. Tools that need to write into the session workspace pull
+    the id from this contextvar &mdash; that's how
+    <code>resolve_in_workspace</code> finds the right directory.
+  </p>
+
+  <div class="callout warn">
+    <span class="ico">!</span>
+    <div>
+      <p><strong>Never add a path argument that bypasses the resolvers.</strong>
+      <code>shell</code> and <code>python_exec</code> are subprocess escape
+      hatches by design &mdash; there is no path filtering inside the child
+      process. Set <code>JG_OS_SANDBOX=1</code> to additionally wrap them and
+      dynamic-tool subprocesses with <code>sandbox-exec -f data/sandbox/jg.sb</code>;
+      see <a href="#fs">&sect;13</a>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 05 DYNAMIC TOOLS ===== -->
+<section id="dynamic" class="s">
+  <h2><span class="num">05</span>Dynamic tools (3 tiers)</h2>
+  <p class="lede">
+    The agent can author its own tools mid-session. Three promotion tiers
+    trade off reversibility against permanence: session-local &rarr; globally
+    published &rarr; first-class source.
+  </p>
+
+  <div class="boxes">
+    <div class="box k">
+      <h4>Tier 1 · session-only</h4>
+      <p><code>tool_create(name, description, input_schema, source)</code></p>
+      <p>Validates, writes
+         <code>workspace/sessions/&lt;sid&gt;/tools/&lt;name&gt;.py</code>,
+         attaches a <code>DynamicSpec</code> to the session's
+         <code>DynamicRegistry</code>, recomputes
+         <code>controller.allowed</code>.</p>
+      <p><em>Vanishes when the session ends</em> &mdash; unless promoted.</p>
+    </div>
+    <div class="box k2">
+      <h4>Tier 2 · globally published</h4>
+      <p><code>tool_publish(name)</code></p>
+      <p>UPSERTs the spec into the <code>generated_tools</code> table with
+         <code>scope='global'</code>. Every future session sees it
+         automatically when <code>_hydrate_dynamic_registry</code> runs &mdash;
+         no restart needed.</p>
+      <p><em>Reversible at runtime</em> via <code>tool_remove</code>
+         (soft-delete, <code>deprecated=True</code>).</p>
+    </div>
+    <div class="box k3">
+      <h4>Tier 3 · first-class source</h4>
+      <p><code>tool_promote_to_source(name)</code></p>
+      <p>Writes the file into <code>src/jazz_guru/actions/tools/&lt;name&gt;.py</code>.
+         The directory glob picks it up on next import.</p>
+      <p><em>Needs a server / worker restart</em> to take effect. Tier 3 changes
+         the codebase; tier 2 stays runtime-reversible.</p>
+    </div>
+  </div>
+
+  <h3>Execution model</h3>
+  <p>
+    The default execution mode for a dynamic tool is a fresh
+    <code>python -I &lt;tool.py&gt;</code> subprocess:
+  </p>
+  <dl class="def">
+    <dt>cwd</dt><dd><code>workspace/sessions/&lt;sid&gt;/</code></dd>
+    <dt>stdin</dt><dd>JSON kwargs</dd>
+    <dt>stdout</dt><dd>JSON result</dd>
+    <dt>timeout</dt><dd>from the <code>python_exec</code> policy entry</dd>
+    <dt>sandbox</dt><dd>wrapped with <code>sandbox-exec</code> when <code>JG_OS_SANDBOX=1</code></dd>
+    <dt>inproc fallback</dt><dd>for trusted helpers that need to share process state</dd>
+  </dl>
+
+  <h3>Hydration on every turn</h3>
+  <p>
+    At the top of <code>AgentLoop.step()</code>,
+    <code>_hydrate_dynamic_registry()</code> calls
+    <code>store.load_all_specs()</code>, pulling every global row from
+    <code>generated_tools</code> into the per-session
+    <code>DynamicRegistry</code>. That registry is merged with the static
+    one before the policy filter runs.
+  </p>
+
+  <h3>Invocation path</h3>
+  <div class="flow">
+    LLM emits tool_use
+    <span class="arrow">→</span>
+    ActionController dispatch
+    <span class="arrow">→</span>
+    merged registry lookup
+    <span class="arrow">→</span>
+    Pydantic validate(input)
+    <span class="arrow">→</span>
+    subprocess (<code>python -I</code>) / inproc call
+    <span class="arrow">→</span>
+    JSON tool_result
+    <span class="arrow">→</span>
+    on_event(tool_result)
+  </div>
+
+  <div class="callout note">
+    <span class="ico">i</span>
+    <div>
+      <p><strong>Why tier 2 vs tier 3 is deliberate.</strong> Tier 2 keeps
+      experiments contained &mdash; you can <code>tool_remove</code> them at
+      runtime, and bad ones are isolated by the subprocess model. Tier 3 is for
+      tools the operator has decided deserve to be bound into the source. Both
+      are surfaced to Claude through the same <code>tool_use</code> interface;
+      the operator decides when to bake one in.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 06 DATABASE SCHEMA ===== -->
+<section id="db" class="s">
+  <h2><span class="num">06</span>Database schema</h2>
+  <p class="lede">
+    Postgres + pgvector. Eight tables managed by Alembic. All async access
+    through <code>db.session_scope()</code>; the synchronous URL exists only
+    for migrations.
+  </p>
+
+  <h3>Tables</h3>
+  <div class="table-wrap">
+  <table class="tbl">
+    <thead><tr><th>Table</th><th>Holds</th><th>Notable columns</th></tr></thead>
+    <tbody>
+      <tr><td><code>sessions</code></td>
+          <td>One row per conversation.</td>
+          <td><code>id</code> (UUID), <code>goal_profile</code>, <code>title</code>,
+              <code>meta JSON</code>, <code>created_at</code>.</td></tr>
+      <tr><td><code>turns</code></td>
+          <td>Every user / assistant / tool / system message.</td>
+          <td><code>session_id</code> FK, <code>idx</code> (per-session
+              ordinal), <code>role</code>, <code>content JSON</code>,
+              <code>tokens_in/out</code>, <code>cost_usd</code>,
+              <code>started_at</code>, <code>ended_at</code>.</td></tr>
+      <tr><td><code>events</code></td>
+          <td>The event stream (one row per controller emission).</td>
+          <td><code>session_id</code>, optional <code>turn_id</code>,
+              <code>type</code> (indexed; <a href="#obs">&sect;12</a>),
+              <code>payload JSON</code>, <code>ts</code> (indexed).</td></tr>
+      <tr><td><code>snapshots</code></td>
+          <td>References to <code>workspace/state/*/turn_*.json</code> on disk.</td>
+          <td><code>session_id</code>, optional <code>turn_id</code>,
+              <code>path</code>, <code>sha256</code>.</td></tr>
+      <tr><td><code>memory_items</code></td>
+          <td>Long-term semantic memory.</td>
+          <td><code>kind</code> (<code>lesson</code>, <code>fact</code>, ...),
+              <code>text</code>, <code>meta</code>,
+              <code>embedding pgvector</code> sized to
+              <code>settings.embedding_dim</code>, <code>score</code>.</td></tr>
+      <tr><td><code>playbook_entries</code></td>
+          <td>Global strategies (no session FK), refined by reflexion.</td>
+          <td><code>scope</code> (e.g. <code>voicing</code>,
+              <code>rhythm</code>, <code>workflow</code>),
+              <code>text</code>, <code>score</code>, <code>meta</code>.</td></tr>
+      <tr><td><code>generated_tools</code></td>
+          <td>Globally-published dynamic tools.</td>
+          <td><code>name</code> UNIQUE, <code>input_schema JSON</code>,
+              <code>source</code>, <code>sha256</code>,
+              <code>scope</code>, <code>owner_session_id</code>,
+              <code>version</code>, <code>deprecated</code>.</td></tr>
+      <tr><td><code>eval_runs</code></td>
+          <td>One row per task per regression run.</td>
+          <td><code>task_id</code>, <code>session_id</code>,
+              <code>score</code>, <code>rubric JSON</code>, <code>notes</code>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="cite">
+    ORM models: <span class="file">src/jazz_guru/state/<b>schema.py</b></span>.
+    Migrations: <span class="file"><b>alembic/</b></span>.
+  </p>
+
+  <h3>Access &amp; operations</h3>
+  <pre><code>async with db.session_scope() as s:
+    s.add(turn)
+    await s.commit()</code></pre>
+  <ul>
+    <li><strong>pgvector required.</strong>
+        <code>CREATE EXTENSION IF NOT EXISTS vector;</code> &mdash; the
+        embedding column is sized off <code>settings.embedding_dim</code>, so
+        Voyage and hash-stub must agree on dimensionality.</li>
+    <li><strong>Two URLs.</strong> <code>DATABASE_URL</code> (asyncpg) for the
+        app, <code>DATABASE_URL_SYNC</code> for alembic only.</li>
+    <li><strong>Migrations.</strong> <code>make migrate</code> runs
+        <code>alembic upgrade head</code>.</li>
+  </ul>
+</section>
+
+<!-- ===== 07 MEMORY ===== -->
+<section id="memory" class="s">
+  <h2><span class="num">07</span>Memory subsystem</h2>
+  <p class="lede">
+    How the agent recalls. A pgvector cosine search backed by Voyage embeddings
+    (or a deterministic hash-stub), a rolling-history summarizer, and a
+    <code>StateDoc</code> projection that lands in the system prompt.
+  </p>
+
+  <h3>MemoryStore &mdash; <span class="file">memory/<b>store.py</b></span></h3>
+  <p>
+    Two async methods: <code>search(query, k, session_id, kind)</code> and
+    <code>write(text, kind, score, meta)</code>. Search runs:
+  </p>
+  <pre><code>emb = await embeddings.embed(query)
+SELECT *, 1 - (embedding &lt;=&gt; :emb) AS sim
+FROM memory_items
+[WHERE kind = :kind AND ...]
+ORDER BY sim DESC
+LIMIT :k</code></pre>
+  <p>
+    Failures &mdash; e.g. pgvector unavailable, embeddings client throws &mdash;
+    are caught and logged. An embedding outage does not break a turn; the
+    agent just gets fewer hits.
+  </p>
+
+  <h3>Embeddings &mdash; <span class="file">memory/<b>embeddings.py</b></span></h3>
+  <p>
+    The Voyage client is wrapped behind a single async <code>embed(text)</code>
+    surface. When <code>VOYAGE_API_KEY</code> is blank, a deterministic
+    sha256-derived float32 vector of <code>settings.embedding_dim</code> is used
+    instead. The fallback is what the test suite relies on, so the suite never
+    touches the network.
+  </p>
+
+  <h3>StateDoc &mdash; <span class="file">state/<b>externalize.py</b></span></h3>
+  <p>
+    The "self-model" that gets injected into the system prompt:
+  </p>
+  <pre><code>@dataclass
+class StateDoc:
+    summary: str
+    open_threads: list[str]
+    artifacts: list[str]
+    last_critique: str | None</code></pre>
+  <p>
+    <code>load_latest(sid)</code> reads
+    <code>workspace/state/&lt;sid&gt;/latest.json</code> and enumerates
+    artifacts by walking <code>workspace/sessions/&lt;sid&gt;/</code>.
+    <code>render_markdown()</code> produces the block the
+    <code>ContextBuilder</code> stitches into the prompt.
+  </p>
+
+  <h3>History compression</h3>
+  <p>
+    The summarizer in <span class="file">memory/<b>summarizer.py</b></span>
+    takes the chat history above a configurable cutoff and replaces it with a
+    short LLM-written summary held as a system note. This keeps the token
+    budget bounded for long-running sessions without losing the gist.
+  </p>
+
+  <h3>Snapshots</h3>
+  <ul>
+    <li>Written every turn end and at reflexion completion.</li>
+    <li>Files: <code>workspace/state/&lt;sid&gt;/latest.json</code> (current)
+        and <code>turn_NNNNN.json</code> (history).</li>
+    <li>Payload: <code>summary</code>, <code>open_threads</code>,
+        <code>artifacts</code>, <code>last_critique</code>, <code>last_plan</code>,
+        <code>last_score</code>.</li>
+    <li>A <code>Snapshot</code> row in Postgres references the path and
+        sha256.</li>
+  </ul>
+
+  <h3>The read-path, in one diagram</h3>
+  <div class="flow">
+    <span class="em">ContextBuilder.build</span>(...)
+    <br/>&nbsp;&nbsp;<span class="arrow">⋮</span> MemoryStore.search(query) &nbsp;<span class="arrow">→</span>&nbsp; semantic hits (pgvector cosine)
+    <br/>&nbsp;&nbsp;<span class="arrow">⋮</span> SELECT PlaybookEntry ORDER BY score LIMIT N
+    <br/>&nbsp;&nbsp;<span class="arrow">⋮</span> state.load_latest(sid) &nbsp;<span class="arrow">→</span>&nbsp; StateDoc.render_markdown()
+    <br/>&nbsp;&nbsp;<span class="arrow">⋮</span> summarizer.compact(history) &nbsp;<span class="arrow">→</span>&nbsp; bounded history block
+    <br/><span class="em">system_block + messages[]</span>
+    <span class="arrow">→</span> llm.complete
+  </div>
+</section>
+
+<!-- ===== 08 REFLEXION ===== -->
+<section id="reflexion" class="s">
+  <h2><span class="num">08</span>Distillation / Reflexion</h2>
+  <p class="lede">
+    Offline learning loop. Runs after a session, summarises the transcript,
+    critiques it, and distils memory + playbook + snapshot updates that the
+    next session will see automatically.
+  </p>
+
+  <h3>Two triggers</h3>
+  <div class="boxes">
+    <div class="box k">
+      <h4>async (default)</h4>
+      <p><code>POST /sessions/{id}/distill</code> or
+         <code>.venv/bin/jazz-guru distill &lt;sid&gt;</code></p>
+      <p>Enqueues <code>reflexion_job</code> on the Redis / RQ queue. The
+         <code>make worker</code> process picks it up. Caller returns
+         immediately.</p>
+    </div>
+    <div class="box k2">
+      <h4>sync (inline)</h4>
+      <p><code>POST /sessions/{id}/distill?sync=true</code> or
+         <code>jazz-guru distill &lt;sid&gt; --sync</code></p>
+      <p><code>run_reflexion</code> is invoked inline in the request handler
+         &mdash; no Redis hop. Useful in tests and one-off runs.</p>
+    </div>
+  </div>
+
+  <h3>The flow &mdash; <span class="file">distillation/<b>reflexion.py</b></span></h3>
+  <ol>
+    <li><code>summarize_transcript(session_id)</code> &mdash; collapses
+        <code>Turn</code> rows and key <code>Event</code> rows into a compact
+        transcript.</li>
+    <li>Build the reflexion prompt. Input: session goal block, transcript
+        summary, current <code>StateDoc</code>, artifact list. Instruction:
+        <em>emit STRICT JSON only</em>.</li>
+    <li><code>llm.complete(...)</code> with the strict JSON contract.</li>
+    <li>Apply writeback (see below).</li>
+    <li>Emit the <code>reflexion</code> event &mdash; subscribers like the
+        trace writer and Postgres event log pick it up.</li>
+  </ol>
+
+  <h3>The JSON contract</h3>
+  <pre><code>{
+  "score": 0.0,        // 0.0 - 1.0, clamped
+  "critique": "...",
+  "revised_plan": "...",
+  "open_threads": ["...", "..."],
+  "memory_writes": [
+    { "text": "...", "kind": "lesson" }
+  ],
+  "playbook_entries": [
+    { "scope": "voicing", "text": "...", "score": 0.7 }
+  ]
+}</code></pre>
+
+  <h3>Writeback targets</h3>
+  <dl class="def">
+    <dt>memory_writes</dt>
+    <dd>Insert <code>MemoryItem</code> rows (default <code>score=0.7</code>,
+        <code>kind</code> from each entry).</dd>
+    <dt>playbook_entries</dt>
+    <dd>Upsert <code>PlaybookEntry</code> rows by <code>(scope, text)</code>.</dd>
+    <dt>snapshot</dt>
+    <dd>Write a fresh
+        <code>workspace/state/&lt;sid&gt;/latest.json</code> carrying the
+        <code>summary</code>, <code>open_threads</code>, <code>artifacts</code>,
+        <code>last_critique</code>, <code>last_plan</code>, <code>last_score</code>.</dd>
+  </dl>
+
+  <h3>How reflexion lands in the next turn</h3>
+  <p>
+    The next <code>AgentLoop.step()</code> sees the writeback through the same
+    code paths the agent uses every turn:
+  </p>
+  <ul>
+    <li><code>memory.search(query)</code> picks up the new
+        <code>MemoryItem</code> by semantic similarity.</li>
+    <li>The top-N <code>PlaybookEntry</code> read picks up the upserted
+        strategy entry.</li>
+    <li><code>state.load_latest()</code> carries <code>summary</code> /
+        <code>open_threads</code> / <code>last_critique</code> into the system
+        prompt via <code>StateDoc</code>.</li>
+  </ul>
+</section>
+
+<!-- ===== 09 EVAL ===== -->
+<section id="eval" class="s">
+  <h2><span class="num">09</span>Eval / regression suite</h2>
+  <p class="lede">
+    Task replay plus LLM-as-judge. Each run produces a scored row in
+    <code>eval_runs</code> you can trend across commits or branches.
+  </p>
+
+  <h3>Task format</h3>
+  <p>
+    Each YAML file under <code>eval/tasks/</code> declares one task:
+  </p>
+  <dl class="def">
+    <dt>id</dt><dd>String, used as <code>EvalRun.task_id</code>.</dd>
+    <dt>prompt</dt><dd>The user message.</dd>
+    <dt>expected</dt><dd>Target behaviour / criteria for the judge.</dd>
+    <dt>setup</dt><dd>Optional fixtures (files copied into the session
+        workspace).</dd>
+    <dt>rubric</dt><dd>List of dimensions (e.g. correctness, tool usage,
+        brevity).</dd>
+  </dl>
+
+  <h3>Runner &mdash; <span class="file">eval/<b>runner.py</b></span></h3>
+  <p>For each task:</p>
+  <ol>
+    <li>Create a fresh <code>Session</code>.</li>
+    <li>Apply fixtures.</li>
+    <li>Issue <code>task.prompt</code> via <code>AgentLoop.step</code>.</li>
+    <li>Capture the assistant message plus the tool trace.</li>
+    <li>Call <code>judge(task, transcript)</code>.</li>
+    <li>Insert an <code>EvalRun</code> row with
+        <code>(task_id, session_id, score, rubric, notes)</code>.</li>
+  </ol>
+
+  <h3>LLM-as-judge &mdash; <span class="file">eval/<b>judge.py</b></span></h3>
+  <p>
+    The judge prompt bundles <code>task.expected</code> + <code>task.rubric</code>
+    + <code>transcript</code>, then calls <code>llm.complete</code> with a
+    strict JSON output:
+  </p>
+  <pre><code>{
+  "score": 0.0,
+  "rubric": { "&lt;dimension&gt;": 0.0, ... },
+  "notes": "..."
+}</code></pre>
+  <p>
+    These land verbatim in <code>EvalRun.score</code>, <code>.rubric</code>,
+    and <code>.notes</code>.
+  </p>
+
+  <h3>Trigger paths</h3>
+  <ul>
+    <li><code>.venv/bin/jazz-guru evalrun [--only &lt;task-id&gt;]</code></li>
+    <li><code>POST /eval/run</code> (sync handler; you can route this through
+        an RQ enqueue if you'd rather not block the request).</li>
+    <li>Any CI step that posts and polls for <code>EvalRun</code> rows.</li>
+  </ul>
+</section>
+
+<!-- ===== 10 AUDIO ===== -->
+<section id="audio" class="s">
+  <h2><span class="num">10</span>Audio rendering pipeline</h2>
+  <p class="lede">
+    <code>render_midi</code> picks an engine from the preset, renders to a
+    temporary WAV, runs an ffmpeg post-process chain, and writes the final WAV
+    into the session workspace.
+  </p>
+
+  <h3>Three engines</h3>
+  <div class="boxes">
+    <div class="box k">
+      <h4>fluidsynth</h4>
+      <p>SoundFont (<code>.sf2</code> / <code>.sf3</code>); General MIDI
+         program changes. Best for orchestral or GM banks.</p>
+    </div>
+    <div class="box k2">
+      <h4>sfizz</h4>
+      <p>SFZ via <code>sfizz_render</code>. Modern sampler scripting; good
+         when you want articulation control.</p>
+    </div>
+    <div class="box k3">
+      <h4>liquidsfz</h4>
+      <p>SFZ via <code>liquidsfz --no-jack --render</code>. Alternative SFZ
+         renderer; useful when sfizz misbehaves on a particular bank.</p>
+    </div>
+  </div>
+  <p>
+    All three are <em>brew-installed</em>; paths resolved through
+    <code>PATH</code>. Source: <span class="file">actions/tools/<b>render.py</b></span>.
+  </p>
+
+  <h3>The preset surface &mdash; <span class="file">data/<b>instruments.yaml</b></span></h3>
+  <p>
+    Presets are the agent-mutable surface that names a render configuration.
+    The <em>only</em> sanctioned read/write path is
+    <span class="file">src/jazz_guru/<b>presets.py</b></span> (mtime-cached;
+    <code>render_midi</code> reloads on every call). Library paths resolve
+    against <code>JG_INSTRUMENTS_ROOT</code>
+    (default <code>~/.local/share/jazz-guru/instruments</code>).
+  </p>
+
+  <pre><code>version: 1
+default: &lt;preset name&gt;
+presets:
+  &lt;name&gt;:
+    engine: fluidsynth | sfizz | liquidsfz
+    library: path/to/sf2|sfz
+    description: ...
+    post:
+      lowpass_hz:    float?
+      lowpass_q:     float?
+      vibrato_hz:    float?
+      vibrato_depth: float?
+      gain_db:       float?
+      normalize:     bool</code></pre>
+
+  <h3>Preset tools</h3>
+  <p>
+    The agent mutates presets through dedicated typed tools, never via
+    <code>fs_*</code> or <code>shell</code>:
+  </p>
+  <ul>
+    <li><code>preset_list()</code> &mdash; names + descriptions + the current
+        default.</li>
+    <li><code>preset_get(name)</code> &mdash; full preset record.</li>
+    <li><code>preset_upsert(name, spec)</code> &mdash; pydantic-validated,
+        atomic-write.</li>
+    <li><code>preset_delete(name)</code> &mdash; refuses if the preset is
+        currently the file default.</li>
+  </ul>
+
+  <h3>ffmpeg post chain</h3>
+  <p>
+    Applied after the engine render. Each field <em>overrides</em> only the
+    corresponding stage; everything else falls through to the preset defaults
+    on a per-render basis.
+  </p>
+  <div class="table-wrap">
+  <table class="tbl">
+    <thead><tr><th>Stage</th><th>ffmpeg expression</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td>lowpass</td>
+          <td><code>lowpass f=&lt;lowpass_hz&gt; [q=&lt;lowpass_q&gt;]</code></td>
+          <td>Muffle / smooth tone.</td></tr>
+      <tr><td>vibrato</td>
+          <td><code>vibrato f=&lt;vibrato_hz&gt; d=&lt;vibrato_depth&gt;</code></td>
+          <td>LFO pitch wobble.</td></tr>
+      <tr><td>volume</td>
+          <td><code>volume &lt;gain_db&gt;dB</code></td>
+          <td>Loudness adjust.</td></tr>
+      <tr><td>loudnorm</td>
+          <td><code>loudnorm I=-16 TP=-1.5 LRA=11</code></td>
+          <td>Broadcast-style normalization (only when <code>normalize=true</code>).</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>What you get back</h3>
+  <p>
+    <code>render_midi</code> writes the final WAV into
+    <code>workspace/sessions/&lt;sid&gt;/</code> and returns
+    <code>{ path, duration_sec, sha256 }</code>.
+  </p>
+</section>
+
+<!-- ===== 11 CONFIG ===== -->
+<section id="config" class="s">
+  <h2><span class="num">11</span>Configuration sources</h2>
+  <p class="lede">
+    Three loaders, all funnelled through
+    <span class="file">src/jazz_guru/<b>config.py</b></span> with an
+    <code>lru_cache</code>. A restart is needed to pick up changes in
+    long-running processes (server, worker).
+  </p>
+
+  <h3>.env &mdash; pydantic-settings</h3>
+  <p>
+    Loaded by <code>pydantic_settings.BaseSettings</code>. The relevant fields:
+  </p>
+  <div class="table-wrap">
+  <table class="tbl">
+    <thead><tr><th>Key</th><th>Default</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>ANTHROPIC_API_KEY</code></td><td><em>required</em></td><td>Any LLM call without this fails fast.</td></tr>
+      <tr><td><code>VOYAGE_API_KEY</code></td><td><code>""</code></td><td>Blank &rarr; hash-stub embeddings.</td></tr>
+      <tr><td><code>JG_API_KEY</code></td><td><code>""</code></td><td>Set &rarr; <code>/chat</code> etc. require <code>X-API-Key</code>.</td></tr>
+      <tr><td><code>JG_OS_SANDBOX</code></td><td><code>false</code></td><td>Wrap shell / python_exec / dyn-tool subprocesses with <code>sandbox-exec</code> (macOS).</td></tr>
+      <tr><td><code>JG_INSTRUMENTS_ROOT</code></td><td><code>~/.local/share/jazz-guru/instruments</code></td><td>Where preset libraries live.</td></tr>
+      <tr><td><code>JG_SAFE_EXTRA_PATHS</code></td><td><code>[]</code></td><td>Extra read-allowed paths for <code>resolve_in_safe</code>.</td></tr>
+      <tr><td><code>DATABASE_URL</code></td><td><em>required</em></td><td>asyncpg URL.</td></tr>
+      <tr><td><code>DATABASE_URL_SYNC</code></td><td><em>required</em></td><td>alembic-only sync URL.</td></tr>
+      <tr><td><code>REDIS_URL</code></td><td><em>required for worker</em></td><td>RQ queue backend.</td></tr>
+      <tr><td><code>FEATURE_TTS</code></td><td>unset</td><td>Feature flag gating the <code>tts</code> tool.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>config/goal.{md,yaml} &mdash; the agent's north star</h3>
+  <p>
+    <code>goal.md</code> is freeform prose (identity, working style, long-term
+    arc); <code>goal.yaml</code> adds structured fields:
+  </p>
+  <pre><code>profile: default
+objectives:
+  - id: make-music
+    text: prefer producing playable artifacts over long descriptions
+    weight: 1.0
+constraints:
+  - keep prose concise
+success_criteria:
+  - rendered .wav available within 2 turns
+style:
+  voice: ...
+  jargon: ...
+  notation_priority: ...</code></pre>
+  <p>
+    <code>GoalConfig.render_system_block()</code> concatenates both and
+    prepends them to every system prompt.
+  </p>
+
+  <h3>config/policy.yaml &mdash; per-tool gates + budgets</h3>
+  <p>
+    Covered in <a href="#tools">&sect;4</a>. The fusion rule, summarised:
+  </p>
+  <pre><code>ActionController.allowed = [
+    spec
+    for spec in registry.specs()
+    if policy.for_tool(spec.name).mode == 'allow'
+    and (not p.feature_flag or os.getenv(p.feature_flag))
+]</code></pre>
+  <p>
+    Resolution order in <code>Policy.for_tool</code>: per-name entry &rarr;
+    matching toolset &rarr; default.
+  </p>
+
+  <h3>How they fuse into the system prompt</h3>
+  <div class="flow">
+    <span class="em">goal.md + goal.yaml</span>
+    <span class="arrow">→</span> static, in context/builder.py
+    <br/><span class="em">StateDoc</span>
+    <span class="arrow">→</span> per-session snapshot
+    <br/><span class="em">playbook</span>
+    <span class="arrow">→</span> top-N from playbook_entries
+    <br/><span class="em">memory</span>
+    <span class="arrow">→</span> MemoryStore.search()
+    <br/><span class="em">history</span>
+    <span class="arrow">→</span> summarizer.compact()
+  </div>
+
+  <div class="callout warn">
+    <span class="ico">!</span>
+    <div>
+      <p><strong>Cache caveat.</strong> <code>get_settings</code> is
+      <code>lru_cache</code>'d. If you edit <code>.env</code> or any YAML in a
+      long-running server or worker, restart the process &mdash; or call
+      <code>get_settings.cache_clear()</code> from a debug shell.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 12 OBSERVABILITY ===== -->
+<section id="obs" class="s">
+  <h2><span class="num">12</span>Observability</h2>
+  <p class="lede">
+    Every controller step emits an event. Three subscribers consume the stream:
+    a JSONL trace writer, the WebSocket fanout, and the Postgres event log.
+  </p>
+
+  <h3>Event types &mdash; <code>EventType</code> in <span class="file">state/<b>schema.py</b></span></h3>
+  <div class="table-wrap">
+  <table class="tbl events-table">
+    <thead><tr><th>Type</th><th>When</th><th>Typical payload</th></tr></thead>
+    <tbody>
+      <tr><td class="e-name">turn_start</td><td>AgentLoop.step() begins</td><td>user message preview</td></tr>
+      <tr><td class="e-name">turn_end</td><td>step() completes</td><td>assistant message, usage, errors</td></tr>
+      <tr><td class="e-name">llm_request</td><td>payload sent to Anthropic</td><td>system + messages preview, tool schemas</td></tr>
+      <tr><td class="e-name">llm_response</td><td>SDK reply received</td><td><code>stop_reason</code>, usage, content shape</td></tr>
+      <tr><td class="e-name">tool_use</td><td>controller dispatching a tool</td><td>tool name + input</td></tr>
+      <tr><td class="e-name">tool_result</td><td>tool returned JSON</td><td>truncated result body</td></tr>
+      <tr><td class="e-name">memory_write</td><td>MemoryItem inserted</td><td>kind, text preview, score</td></tr>
+      <tr><td class="e-name">memory_read</td><td><code>memory.search</code> executed</td><td>query, hits count</td></tr>
+      <tr><td class="e-name">reflexion</td><td><code>run_reflexion</code> completed</td><td>score, critique, counts</td></tr>
+      <tr><td class="e-name">error</td><td>anything wrapped in try/except</td><td>kind, message; never breaks the turn</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>The fanout</h3>
+  <p>
+    <code>ActionController.on_event(event_type, payload, *, session_id,
+    turn_id)</code> calls every subscriber attached by
+    <code>AgentLoop</code> / the server during <code>step()</code>
+    construction. Three subscribers ship out of the box:
+  </p>
+
+  <div class="boxes">
+    <div class="box k">
+      <h4>TraceWriter</h4>
+      <p><span class="file">logging/<b>trace.py</b></span></p>
+      <p>Appends one JSON object per event to
+         <code>workspace/traces/&lt;sid&gt;.jsonl</code>.
+         Format: <code>{"ts": iso, "type": ..., "turn_id": ..., "payload": ...}</code>.</p>
+    </div>
+    <div class="box k2">
+      <h4>WebSocket</h4>
+      <p><code>WS /ws/sessions/{id}/chat</code></p>
+      <p>Pushes every event, in order. Auth via subprotocol header:
+         <code>Sec-WebSocket-Protocol: bearer, &lt;JG_API_KEY&gt;</code>.
+         <code>auth.require_ws()</code> runs explicitly since Starlette
+         middleware doesn't fire on WS.</p>
+    </div>
+    <div class="box k3">
+      <h4>Postgres event log</h4>
+      <p><span class="file">state/<b>event_log.py</b></span></p>
+      <p>Inserts a row into <code>events</code> for every emission, indexed by
+         <code>type</code> and <code>ts</code>. Queryable for replay,
+         postmortems, telemetry.</p>
+    </div>
+  </div>
+
+  <h3>Trace viewer &mdash; <code>jazz-guru viewer</code></h3>
+  <p>
+    Tiny uvicorn app at <code>:8765</code>. Lists
+    <code>workspace/traces/*.jsonl</code>, tails the chosen file in a browser,
+    and pretty-prints each event by type. Useful when you're not running the
+    full FastAPI server but still want a live view of an agent run.
+  </p>
+
+  <h3>structlog (app-level)</h3>
+  <p>
+    Configured at module import in
+    <span class="file">logging/<b>__init__.py</b></span>. JSON or console
+    renderer. Used for everything <em>outside</em> the event stream &mdash;
+    setup errors, retries inside <code>llm.complete</code>, config loading,
+    alembic migrations, FastAPI access logs via uvicorn.
+  </p>
+</section>
+
+<!-- ===== 13 FS / SANDBOX ===== -->
+<section id="fs" class="s">
+  <h2><span class="num">13</span>Filesystem &amp; macOS sandbox</h2>
+  <p class="lede">
+    The agent's writable footprint is confined to <code>workspace/</code>. On
+    macOS, <code>JG_OS_SANDBOX=1</code> wraps subprocesses with
+    <code>sandbox-exec</code> using a profile we ship in the repo.
+  </p>
+
+  <h3>Directory tree (relative to project root)</h3>
+  <pre><code>jazz-guru/
+├─ .env                       # secrets · feature flags
+├─ alembic/                   # DB migrations
+├─ alembic.ini
+├─ Makefile                   # setup · server · worker · tui · viewer
+├─ pyproject.toml             # ruff / mypy / pytest config
+├─ config/
+│  ├─ goal.md                 # prose preamble
+│  ├─ goal.yaml               # structured objectives / constraints
+│  └─ policy.yaml             # per-tool gates + budgets
+├─ data/
+│  ├─ instruments.yaml        # preset surface (agent-mutable)
+│  └─ sandbox/jg.sb           # sandbox-exec profile (macOS)
+├─ docs/
+│  └─ architecture.pdf        # 15-page diagram (this manual is its companion)
+├─ src/jazz_guru/
+│  ├─ cli.py · server.py · auth.py · llm.py · presets.py · worker.py
+│  ├─ config.py · db.py
+│  ├─ harness/ actions/ context/ memory/ state/
+│  ├─ distillation/ eval/
+│  ├─ client/ logging/ web/
+├─ tests/unit/                # pytest (asyncio_mode = 'auto')
+├─ workspace/                 # the only writable runtime root
+│  ├─ sessions/&lt;sid&gt;/        # artifacts · uploads
+│  ├─ sessions/&lt;sid&gt;/tools/  # tier-1 dynamic tool files
+│  ├─ state/&lt;sid&gt;/latest.json
+│  ├─ state/&lt;sid&gt;/turn_*.json
+│  └─ traces/&lt;sid&gt;.jsonl
+└─ ~/.local/share/jazz-guru/instruments/   # (JG_INSTRUMENTS_ROOT) SF2 / SFZ libraries</code></pre>
+
+  <h3>Sandbox helpers</h3>
+  <p>
+    <span class="file">actions/sandbox/</span> exposes two resolvers:
+  </p>
+  <ul>
+    <li><code>resolve_in_workspace(path, sid)</code> &mdash; strict, only paths
+        inside <code>workspace/sessions/&lt;sid&gt;/</code>. Used for
+        <em>writes</em> and any user-supplied path that should stay inside the
+        session.</li>
+    <li><code>resolve_in_safe(path, sid)</code> &mdash; read-oriented; same
+        set plus <code>data/</code> plus <code>JG_SAFE_EXTRA_PATHS</code>. Used
+        by tools that legitimately read project data, like preset lookups.</li>
+  </ul>
+  <p>
+    Tools that touch project data outside the session expose a dedicated typed
+    surface (see <span class="file">actions/tools/<b>presets.py</b></span>).
+    <strong>Never</strong> require the agent to use <code>fs_write</code> /
+    <code>shell</code> / <code>python_exec</code> against project data.
+  </p>
+
+  <h3>macOS sandbox profile &mdash; <span class="file">data/sandbox/<b>jg.sb</b></span></h3>
+  <p>
+    When <code>JG_OS_SANDBOX=1</code> the harness wraps
+    <code>shell</code>, <code>python_exec</code>, and dynamic-tool subprocesses
+    with:
+  </p>
+  <pre><code>sandbox-exec -f data/sandbox/jg.sb \
+  -D WORKSPACE=/abs/workspace/sessions/&lt;sid&gt; \
+  -D DATA=/abs/data \
+  &lt;argv...&gt;</code></pre>
+  <p>Rules summary:</p>
+  <ul>
+    <li><strong>deny everything by default</strong>;</li>
+    <li>allow process startup (<code>fork</code>, <code>exec</code>,
+        <code>signal</code>, <code>mach-lookup</code>, <code>sysctl-read</code>,
+        <code>ipc-posix-shm</code>);</li>
+    <li>allow file-read against <code>/usr/lib</code>, <code>/usr/share</code>,
+        <code>/System/Library</code>, Frameworks, <code>/opt/homebrew</code>,
+        <code>/usr/local</code>, <code>/private/var/db/dyld</code>, pyenv +
+        <code>.venv</code> install roots, plus <code>{WORKSPACE}</code> and
+        <code>{DATA}</code>;</li>
+    <li>allow file-write against <code>{WORKSPACE}</code>,
+        <code>/private/tmp</code>, <code>/private/var/folders</code>;</li>
+    <li>allow network (so HTTP / web search tools still work; revoke this in
+        your profile if you want full isolation).</li>
+  </ul>
+
+  <div class="callout note">
+    <span class="ico">i</span>
+    <div>
+      <p><strong>The flag is opt-in.</strong> Off by default because the
+      profile is macOS-specific (no Linux equivalent ships in this repo). When
+      you turn it on, expect to add paths to the profile if your tools need
+      libraries outside the allow-list.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 14 SERVER & CLIENTS ===== -->
+<section id="server" class="s">
+  <h2><span class="num">14</span>Server surface &amp; clients</h2>
+  <p class="lede">
+    The FastAPI app, the optional <code>X-API-Key</code> middleware, and the
+    family of clients that talk to it.
+  </p>
+
+  <h3>HTTP routes</h3>
+  <div class="table-wrap">
+  <table class="tbl">
+    <thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><span class="m m-get">GET</span></td><td><code>/</code></td><td>API index (the landing page you see at <code>127.0.0.1:8000</code>).</td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td><code>/favicon.ico</code></td><td>Redirects to <code>/ui/favicon.svg</code>.</td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td><code>/health</code></td><td>Liveness probe.</td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td><code>/goal</code></td><td>Rendered goal block + objectives + constraints + success criteria.</td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td><code>/docs</code></td><td>Swagger UI.</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td><code>/sessions</code></td><td>Create a session; returns <code>{id}</code>.</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td><code>/sessions/{id}/chat</code></td><td>One synchronous chat turn.</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td><code>/sessions/{id}/distill</code></td><td>Run reflexion (async by default; <code>?sync=true</code> to run inline).</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td><code>/eval/run</code></td><td>Run the regression suite (<code>?only=&lt;task-id&gt;</code> to filter).</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td><code>/memory/search</code></td><td>Vector search over memory.</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td><code>/uploads/{id}</code></td><td>Stream an upload into <code>workspace/sessions/&lt;id&gt;/in/</code>. 50 MiB cap.</td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td><code>/artifacts/{id}</code></td><td>List session artifacts.</td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td><code>/artifacts/{id}/{path}</code></td><td>Download one artifact.</td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td><code>/mcp/status</code></td><td>MCP manager status.</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td><code>/mcp/reload</code></td><td>Hot-reload MCP configuration.</td></tr>
+      <tr><td><span class="m m-ws">WS</span></td><td><code>/ws/sessions/{id}/chat</code></td><td>Streaming chat. Subprotocol <code>bearer, &lt;token&gt;</code> for auth.</td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td><code>/ui/*</code></td><td>Static web UI under <code>web/static/</code>.</td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td><code>/user_manual/*</code></td><td>This manual.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Auth &mdash; <span class="file"><b>auth.py</b></span></h3>
+  <p>
+    Off unless <code>JG_API_KEY</code> is set in the env. When on:
+  </p>
+  <ul>
+    <li>HTTP: every request must carry <code>X-API-Key: &lt;value&gt;</code> in
+        the header. Missing or wrong &rarr; 401.</li>
+    <li>WebSocket: middleware does not run for WS. Each handler calls
+        <code>auth.require_ws(token)</code>, reading the token from the
+        <code>Sec-WebSocket-Protocol</code> header. Convention: client sends
+        <code>["bearer", "&lt;token&gt;"]</code>; the server echoes
+        <code>"bearer"</code> as the negotiated subprotocol.</li>
+    <li>Exempt paths: <code>/</code>, <code>/health</code>, <code>/docs</code>,
+        <code>/redoc</code>, <code>/openapi.json</code>, <code>/favicon.ico</code>,
+        <code>/ui</code>, <code>/ui/*</code>, <code>/static/*</code>.</li>
+  </ul>
+
+  <h3>CLI &mdash; <span class="file"><b>cli.py</b></span></h3>
+  <div class="table-wrap">
+  <table class="tbl">
+    <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>info</code></td><td>Show resolved config.</td></tr>
+      <tr><td><code>ping</code></td><td>Verify <code>ANTHROPIC_API_KEY</code>.</td></tr>
+      <tr><td><code>goal</code></td><td>Print the rendered goal block.</td></tr>
+      <tr><td><code>tools</code></td><td>List registered tools + schemas.</td></tr>
+      <tr><td><code>new-session</code></td><td>Create + print a session id.</td></tr>
+      <tr><td><code>chat "&lt;msg&gt;" [--session &lt;uuid&gt;]</code></td><td>One chat turn from the terminal.</td></tr>
+      <tr><td><code>distill &lt;sid&gt; [--sync]</code></td><td>Reflexion loop.</td></tr>
+      <tr><td><code>evalrun [--only &lt;id&gt;]</code></td><td>Regression suite.</td></tr>
+      <tr><td><code>trace &lt;sid&gt;</code></td><td>Dump the JSONL trace.</td></tr>
+      <tr><td><code>viewer</code></td><td>Trace viewer on <code>:8765</code>.</td></tr>
+      <tr><td><code>tui</code></td><td>Textual TUI (server required).</td></tr>
+      <tr><td><code>mic-devices</code></td><td>List PortAudio inputs.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Client-side ecosystem</h3>
+  <ul>
+    <li><strong>Textual TUI</strong> &mdash;
+        <span class="file">src/jazz_guru/client/<b>tui.py</b></span>. PortAudio
+        mic capture, live event tail; subscribes to
+        <code>WS /ws/sessions/{id}/chat</code>.</li>
+    <li><strong>Typed SDK</strong> &mdash;
+        <span class="file">src/jazz_guru/client/<b>sdk.py</b></span>. Plain
+        HTTP wrappers for the core routes plus a WS streaming helper.</li>
+    <li><strong>Static web UI</strong> &mdash;
+        <span class="file">src/jazz_guru/web/<b>static/</b></span>. Minimal
+        HTML+JS chat surface for casual use; served at <code>/ui/</code>.</li>
+    <li><strong>Trace viewer</strong> &mdash;
+        <span class="file">src/jazz_guru/logging/<b>viewer/</b></span>. Served
+        on <code>:8765</code>; independent of the main server. Useful when
+        running offline batch sessions.</li>
+    <li><strong>External CI / scripts</strong> &mdash; anything that can POST
+        and poll. The eval suite is designed to be polled this way for release
+        gating.</li>
+  </ul>
+</section>
+
+<!-- ===== 15 MCP & SUBAGENTS ===== -->
+<section id="mcp" class="s">
+  <h2><span class="num">15</span>MCP &amp; subagents</h2>
+  <p class="lede">
+    Two surfaces the architecture diagram only hints at: Model Context Protocol
+    integration for plugging in external tool servers, and
+    <code>delegate_task</code> for spawning child agents.
+  </p>
+
+  <h3>MCP &mdash; <span class="file">actions/mcp/</span></h3>
+  <p>
+    The Model Context Protocol lets the agent reach tools that live in a
+    separate process &mdash; another binary, a remote service, an
+    operator-built sidecar. The harness starts and stops MCP servers alongside
+    the FastAPI lifecycle through <code>MCPManager</code>:
+  </p>
+  <ul>
+    <li>Configuration: <span class="file">config/<b>mcp.yaml</b></span>.</li>
+    <li>Lifespan: <code>_lifespan</code> in <span class="file"><b>server.py</b></span>
+        calls <code>mgr.start_all()</code> on startup and
+        <code>mgr.stop_all()</code> on shutdown; failures are logged but do
+        not abort startup &mdash; a misconfigured MCP server should not
+        prevent the rest of the agent from running.</li>
+    <li>Status &amp; reload: <code>GET /mcp/status</code> and
+        <code>POST /mcp/reload</code>.</li>
+  </ul>
+
+  <h3>Subagent delegation &mdash; <code>delegate_task</code></h3>
+  <p>
+    Implemented in <span class="file">actions/tools/<b>delegate.py</b></span>.
+    Spawns a child agent with its own conversation history for an isolated
+    sub-task. The child reports back through the same tool-result interface;
+    the parent continues with the result folded into its <code>messages</code>.
+    Useful when one branch of work would otherwise pollute the parent context
+    (large research sweeps, exhaustive enumeration over options).
+  </p>
+
+  <h3>Background jobs &mdash; <span class="file">actions/<b>jobs.py</b></span></h3>
+  <p>
+    Long-running tool work (e.g. a multi-minute render) is dispatched into a
+    <code>BackgroundJobRegistry</code> that persists for the lifetime of the
+    <code>AgentLoop</code> &mdash; i.e. the session. A render started in turn 1
+    remains inspectable in turn 5. Tools can spawn a job, return immediately
+    with a handle, and let the agent poll later through a follow-up tool call.
+  </p>
+</section>
+
+<!-- ===== 16 REFERENCE ===== -->
+<section id="reference" class="s">
+  <h2><span class="num">16</span>Reference</h2>
+  <p class="lede">A short appendix: pointers back to the most useful source files and configuration files.</p>
+
+  <h3>Where to start in the source</h3>
+  <div class="table-wrap">
+  <table class="tbl">
+    <thead><tr><th>You want to...</th><th>Open</th></tr></thead>
+    <tbody>
+      <tr><td>understand one turn end-to-end</td><td><span class="file">src/jazz_guru/harness/<b>loop.py</b></span></td></tr>
+      <tr><td>change what the model sees</td><td><span class="file">src/jazz_guru/context/<b>builder.py</b></span></td></tr>
+      <tr><td>debug a tool call</td><td><span class="file">src/jazz_guru/actions/<b>controller.py</b></span></td></tr>
+      <tr><td>add a built-in tool</td><td>new file under <span class="file">src/jazz_guru/actions/tools/</span> + entry in <span class="file">config/<b>policy.yaml</b></span></td></tr>
+      <tr><td>tweak budgets / feature flags</td><td><span class="file">config/<b>policy.yaml</b></span></td></tr>
+      <tr><td>change agent personality</td><td><span class="file">config/<b>goal.md</b></span> and <span class="file">config/<b>goal.yaml</b></span></td></tr>
+      <tr><td>add a route or websocket</td><td><span class="file">src/jazz_guru/<b>server.py</b></span></td></tr>
+      <tr><td>add or evolve a table</td><td><span class="file">src/jazz_guru/state/<b>schema.py</b></span> + a new alembic revision</td></tr>
+      <tr><td>add an evaluation task</td><td>new YAML under <span class="file">eval/tasks/</span></td></tr>
+      <tr><td>render a different instrument</td><td><span class="file">data/<b>instruments.yaml</b></span> (via <code>preset_upsert</code>)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Make targets</h3>
+  <div class="table-wrap">
+  <table class="tbl">
+    <thead><tr><th>Target</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>make setup</code></td><td>One-shot: brew deps + venv + DB + alembic.</td></tr>
+      <tr><td><code>make install</code></td><td>venv + python deps only.</td></tr>
+      <tr><td><code>make migrate</code></td><td><code>alembic upgrade head</code>.</td></tr>
+      <tr><td><code>make test</code></td><td><code>pytest -q</code>.</td></tr>
+      <tr><td><code>make lint</code></td><td><code>ruff check</code>.</td></tr>
+      <tr><td><code>make format</code></td><td><code>ruff format</code>.</td></tr>
+      <tr><td><code>make typecheck</code></td><td><code>mypy</code>.</td></tr>
+      <tr><td><code>make server</code></td><td>FastAPI + WebSocket on <code>127.0.0.1:8000</code>.</td></tr>
+      <tr><td><code>make worker</code></td><td>RQ worker (needs Redis).</td></tr>
+      <tr><td><code>make viewer</code></td><td>Local trace viewer on <code>:8765</code>.</td></tr>
+      <tr><td><code>make tui</code></td><td>Textual TUI client.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Linked from this manual</h3>
+  <ul>
+    <li><a href="/user_manual/architecture.pdf">docs/architecture.pdf</a> &mdash; the 15-page architecture diagram this manual was written against.</li>
+    <li><a href="/docs">/docs</a> &mdash; Swagger UI (interactive API reference).</li>
+    <li><a href="/goal">/goal</a> &mdash; the rendered goal block the agent boots with.</li>
+    <li><a href="/">/</a> &mdash; the API index page (a short table of every route).</li>
+    <li><a href="/ui/">/ui/</a> &mdash; the static web UI.</li>
+  </ul>
+
+  <h3>Re-rendering the architecture PDF</h3>
+  <p>
+    The PDF was rendered from a script that lives outside the package:
+  </p>
+  <pre><code>.venv/bin/python workspace/scratch/architecture_diagram.py</code></pre>
+  <p>
+    Re-render after major architecture changes and commit both the script and
+    the resulting <code>docs/architecture.pdf</code>; this manual is kept in
+    sync by hand.
+  </p>
+</section>
+
+<footer class="foot">
+  jazz-guru user manual · companion to
+  <a href="/user_manual/architecture.pdf">docs/architecture.pdf</a> ·
+  source at <code>src/jazz_guru/web/user_manual/</code>.
+</footer>
+
+</main>
+</div>
+
+<script src="./manual.js" defer></script>
+</body>
+</html>

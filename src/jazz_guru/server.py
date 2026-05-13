@@ -29,6 +29,8 @@ from jazz_guru.state import list_session_artifacts
 log = get_logger(__name__)
 
 WEB_STATIC = Path(__file__).resolve().parent / "web" / "static"
+WEB_MANUAL = Path(__file__).resolve().parent / "web" / "user_manual"
+ARCH_PDF = Path(__file__).resolve().parent.parent.parent / "docs" / "architecture.pdf"
 
 
 class CreateSessionBody(BaseModel):
@@ -96,12 +98,29 @@ def create_app() -> FastAPI:
     if WEB_STATIC.exists():
         app.mount("/ui", StaticFiles(directory=str(WEB_STATIC), html=True), name="ui")
 
+    # The user manual is a static companion to docs/architecture.pdf; we also
+    # expose the PDF itself under the same prefix so links inside the manual
+    # resolve without needing a separate route.
+    if WEB_MANUAL.exists():
+        @app.get("/user_manual/architecture.pdf")
+        async def _manual_pdf() -> FileResponse:
+            if not ARCH_PDF.is_file():
+                raise HTTPException(404, "architecture.pdf not found")
+            return FileResponse(str(ARCH_PDF), media_type="application/pdf")
+
+        app.mount(
+            "/user_manual",
+            StaticFiles(directory=str(WEB_MANUAL), html=True),
+            name="user_manual",
+        )
+
     # ---------- index ----------------------------------------------------
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
         g = get_goal()
         rows = [
             ("GET",  "/ui/",                               "graphical web UI"),
+            ("GET",  "/user_manual/",                      "architecture &amp; user manual"),
             ("GET",  "/health",                            "liveness check"),
             ("GET",  "/goal",                              "rendered goal block"),
             ("GET",  "/docs",                              "Swagger UI"),
@@ -138,6 +157,7 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
   <span class="tag">profile: {g.profile}</span>
   <span class="tag">objectives: {len(g.objectives)}</span>
   <a href="/ui/">graphical UI &rarr;</a> &nbsp;
+  <a href="/user_manual/">user manual &rarr;</a> &nbsp;
   <a href="/docs">interactive API docs &rarr;</a>
 </div>
 <table>{body}</table>"""
