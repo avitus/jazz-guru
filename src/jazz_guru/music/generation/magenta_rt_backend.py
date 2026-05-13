@@ -49,8 +49,13 @@ class MagentaRealtimeBackend(BaseBackend):
     def _probe(cls) -> bool:  # type: ignore[override]
         cli = get_settings().jg_magenta_rt_cli.strip()
         # shlex.split tolerates quoted paths with spaces; plain str.split
-        # would shred `"/opt/Magenta RT/bin/magenta-rt"`.
-        cli_argv = shlex.split(cli) if cli else []
+        # would shred `"/opt/Magenta RT/bin/magenta-rt"`. Malformed quoting
+        # raises ValueError — treat that as "no usable CLI configured" so
+        # the Python-backend fallback still gets a chance to run.
+        try:
+            cli_argv = shlex.split(cli) if cli else []
+        except ValueError:
+            cli_argv = []
         if cli_argv and shutil.which(cli_argv[0]):
             return True
         try:
@@ -147,7 +152,14 @@ class MagentaRealtimeBackend(BaseBackend):
         warnings: list[str] = []
 
         cli = get_settings().jg_magenta_rt_cli.strip()
-        cli_argv = shlex.split(cli) if cli else []
+        try:
+            cli_argv = shlex.split(cli) if cli else []
+        except ValueError as exc:
+            cli_argv = []
+            warnings.append(
+                f"invalid JG_MAGENTA_RT_CLI shell quoting ({exc}); "
+                "falling back to the python backend"
+            )
         if cli_argv and shutil.which(cli_argv[0]):
             # See note in MT3Backend.transcribe_to_midi — the helper avoids
             # ``RuntimeError: asyncio.run() cannot be called from a running

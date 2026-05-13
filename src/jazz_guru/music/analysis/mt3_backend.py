@@ -64,7 +64,12 @@ class MT3Backend(BaseBackend):
         cli = get_settings().jg_mt3_cli.strip()
         # shlex.split honours quoted executables / paths with spaces, which
         # plain str.split() would shred (e.g. `"/opt/MT3 Wrapper/bin/mt3"`).
-        cli_argv = shlex.split(cli) if cli else []
+        # Malformed quoting raises ValueError; treat that as "no usable
+        # CLI" so the Python fallback still gets a chance.
+        try:
+            cli_argv = shlex.split(cli) if cli else []
+        except ValueError:
+            cli_argv = []
         if cli_argv and shutil.which(cli_argv[0]):
             return True
         try:
@@ -155,7 +160,14 @@ class MT3Backend(BaseBackend):
             )
 
         cli = get_settings().jg_mt3_cli.strip()
-        cli_argv = shlex.split(cli) if cli else []
+        try:
+            cli_argv = shlex.split(cli) if cli else []
+        except ValueError as exc:
+            cli_argv = []
+            warnings.append(
+                f"invalid JG_MT3_CLI shell quoting ({exc}); "
+                "falling back to the python backend"
+            )
         if cli_argv and shutil.which(cli_argv[0]):
             # ``transcribe_to_midi`` is part of a sync protocol but may be
             # called from inside an event loop (agent tools / tests). Use
