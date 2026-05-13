@@ -1272,12 +1272,14 @@ style:
   <p>
     Covered in <a href="#tools">&sect;4</a>. The fusion rule, summarised:
   </p>
-  <pre><code>ActionController.allowed = [
-    spec
-    for spec in registry.specs()
-    if policy.for_tool(spec.name).mode == 'allow'
-    and (not p.feature_flag or os.getenv(p.feature_flag))
-]</code></pre>
+  <pre><code>allowed = set()
+for name in registry.names():
+    tp = policy.for_tool(name)
+    if tp.mode != 'allow':
+        continue
+    if tp.feature_flag and not getattr(settings, tp.feature_flag.lower(), 0):
+        continue
+    allowed.add(name)</code></pre>
   <p>
     Resolution order in <code>Policy.for_tool</code>: per-name entry &rarr;
     matching toolset &rarr; default.
@@ -1533,7 +1535,8 @@ style:
         <code>"bearer"</code> as the negotiated subprotocol.</li>
     <li>Exempt paths: <code>/</code>, <code>/health</code>, <code>/docs</code>,
         <code>/redoc</code>, <code>/openapi.json</code>, <code>/favicon.ico</code>,
-        <code>/ui</code>, <code>/ui/*</code>, <code>/static/*</code>.</li>
+        <code>/ui</code>, <code>/ui/*</code>, <code>/static/*</code>,
+        <code>/user_manual</code>, <code>/user_manual/*</code>.</li>
   </ul>
 
   <h3>CLI &mdash; <span class="file"><b>cli.py</b></span></h3>
