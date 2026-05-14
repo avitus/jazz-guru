@@ -12,7 +12,12 @@ from rich.table import Table
 
 from jazz_guru.cli_tool import tool_app
 from jazz_guru.config import get_goal, get_policy, get_settings
-from jazz_guru.distillation import enqueue_reflexion, run_reflexion
+from jazz_guru.distillation import (
+    enqueue_reflexion,
+    maybe_trigger,
+    run_reflexion,
+    scan_predecessors,
+)
 from jazz_guru.eval import run_all
 from jazz_guru.harness import AgentLoop, SessionManager
 from jazz_guru.llm import health_check_detailed
@@ -80,11 +85,21 @@ def tools() -> None:
 
 @app.command("new-session")
 def new_session(title: str = typer.Option(None, help="Optional title for the session.")) -> None:
-    """Create a new session row and print its ID."""
+    """Create a new session row and print its ID.
+
+    Also scans for idle, undistilled predecessor sessions and queues them
+    for reflexion. Disable via jg_distill_on_new_session=False.
+    """
 
     async def _run() -> uuid.UUID:
+        import contextlib
+
         sm = SessionManager()
         h = await sm.create(title=title)
+        # Best-effort: a predecessor-scan failure should not prevent
+        # session creation.
+        with contextlib.suppress(Exception):
+            await scan_predecessors(reason="new_session")
         return h.id
 
     sid = asyncio.run(_run())
@@ -152,6 +167,42 @@ def distill(
         except Exception as e:
             console.print(f"[red]could not enqueue: {e}[/red] (try --sync)")
             raise typer.Exit(code=1) from e
+
+
+session_app = typer.Typer(help="Session lifecycle commands.")
+app.add_typer(session_app, name="session")
+
+
+@session_app.command("close")
+def session_close(
+    session_id: str = typer.Argument(..., help="Session UUID"),
+    sync: bool = typer.Option(False, "--sync", help="Run reflexion inline instead of enqueuing."),
+) -> None:
+    """Signal a session is done; auto-distill via the trigger funnel.
+
+    Without --sync: enqueues reflexion if a worker is reachable, falls
+    back to running it inline up to the per-process cap, or skips if
+    both are unavailable.
+    """
+
+    async def _run() -> dict[str, object]:
+        try:
+            sid = uuid.UUID(session_id)
+        except ValueError as e:
+            console.print(f"[red]invalid session id: {e}[/red]")
+            raise typer.Exit(code=2) from e
+        if sync:
+            r = await run_reflexion(sid)
+            return {"mode": "sync", "score": r.score, "critique": r.critique}
+        result = await maybe_trigger(sid, reason="close")
+        out: dict[str, object] = {"outcome": result.outcome, "reason": result.reason}
+        if result.job_id is not None:
+            out["job_id"] = result.job_id
+        if result.err is not None:
+            out["err"] = result.err
+        return out
+
+    console.print_json(json.dumps(asyncio.run(_run())))
 
 
 @app.command()

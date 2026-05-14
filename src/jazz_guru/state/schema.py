@@ -56,6 +56,10 @@ class EventType(enum.StrEnum):
     TOOL_IMPROVE_PASSED = "tool_improve_passed"
     TOOL_IMPROVE_FAILED = "tool_improve_failed"
     TOOL_ROLLBACK = "tool_rollback"
+    # Auto-distillation lifecycle (close / idle-sweep / new-session predecessor scan)
+    DISTILLATION_QUEUED = "distillation_queued"
+    DISTILLATION_INLINE = "distillation_inline"
+    DISTILLATION_SKIPPED = "distillation_skipped"
 
 
 class Session(Base):
