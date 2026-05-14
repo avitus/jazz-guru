@@ -29,6 +29,16 @@ def get_queues() -> list[Queue]:
 def run() -> None:
     log.info("worker.starting", queues=QUEUE_NAMES)
     queues = get_queues()
+    # Seed the auto-distillation idle sweep. The sweep_job re-enqueues
+    # itself so this only fires once per worker boot. Wrapped because a
+    # Redis hiccup at startup shouldn't prevent the worker from running
+    # other jobs.
+    try:
+        from jazz_guru.distillation.scheduler import schedule_idle_sweep
+
+        schedule_idle_sweep()
+    except Exception as e:
+        log.warning("worker.idle_sweep_seed_failed", err=str(e))
     worker = Worker(queues, connection=queues[0].connection)
     worker.work(with_scheduler=True)
 

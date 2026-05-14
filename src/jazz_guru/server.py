@@ -17,7 +17,12 @@ from pydantic import BaseModel
 
 from jazz_guru import auth
 from jazz_guru.config import get_goal, get_settings
-from jazz_guru.distillation import enqueue_reflexion, run_reflexion
+from jazz_guru.distillation import (
+    enqueue_reflexion,
+    maybe_trigger,
+    run_reflexion,
+    scan_predecessors,
+)
 from jazz_guru.eval import run_all
 from jazz_guru.harness import AgentLoop, SessionManager
 from jazz_guru.logging import get_logger
@@ -84,6 +89,7 @@ def create_app() -> FastAPI:
             ("POST", "/sessions",                          "create a new session"),
             ("POST", "/sessions/{id}/chat",                "send a message"),
             ("POST", "/sessions/{id}/distill?sync=true",   "run reflexion distillation"),
+            ("POST", "/sessions/{id}/close",               "signal end-of-session; auto-distill"),
             ("POST", "/eval/run",                          "run the regression suite"),
             ("POST", "/memory/search",                     "vector search over memory"),
             ("GET",  "/artifacts/{id}",                    "list session artifacts (JSON)"),
@@ -137,10 +143,23 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
             "success_criteria": g.success_criteria,
         }
 
+    # Background-task pin: asyncio.create_task only holds a weakref to
+    # the running coroutine, so without a strong reference the GC can
+    # collect a fire-and-forget task mid-flight. Hold every spawned scan
+    # in this set and let the callback drop the strong ref on completion.
+    _bg_tasks: set[asyncio.Task[None]] = set()
+
     # ---------- sessions / chat -----------------------------------------
     @app.post("/sessions")
     async def create_session(body: CreateSessionBody) -> dict[str, str]:
         h = await sm.create(title=body.title, goal_profile=body.goal_profile)
+        # Fire-and-forget: scan for idle, undistilled predecessors and
+        # queue them. Not awaited so the request returns immediately even
+        # if the scan stalls. Disabled via jg_distill_on_new_session=False.
+        if get_settings().jg_distill_on_new_session:
+            task = asyncio.create_task(_safe_scan_predecessors())
+            _bg_tasks.add(task)
+            task.add_done_callback(_bg_tasks.discard)
         return {"id": str(h.id)}
 
     @app.post("/sessions/{session_id}/chat")
@@ -178,6 +197,40 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
             return {"mode": "async", "job_id": job_id}
         except Exception as e:
             raise HTTPException(500, f"could not enqueue: {e}") from e
+
+    @app.post("/sessions/{session_id}/close")
+    async def close_session(session_id: str, sync: bool = False) -> dict[str, object]:
+        """Signal that a session is done; auto-distill via the funnel.
+
+        Does NOT mark the session as closed in the DB — sending a new turn
+        afterwards just re-arms the idempotency check and the next trigger
+        will re-distill.
+        """
+        try:
+            sid = uuid.UUID(session_id)
+        except ValueError as e:
+            raise HTTPException(400, f"invalid session id: {e}") from e
+        if not get_settings().jg_distill_on_close:
+            return {"outcome": "disabled"}
+        if sync:
+            r = await run_reflexion(sid)
+            return {"mode": "sync", "score": r.score, "critique": r.critique}
+        result = await maybe_trigger(sid, reason="close")
+        body: dict[str, object] = {
+            "outcome": result.outcome,
+            "reason": result.reason,
+        }
+        if result.job_id is not None:
+            body["job_id"] = result.job_id
+        if result.err is not None:
+            body["err"] = result.err
+        return body
+
+    async def _safe_scan_predecessors() -> None:
+        try:
+            await scan_predecessors(reason="new_session")
+        except Exception as e:
+            log.warning("auto.new_session_scan_failed", err=str(e))
 
     @app.post("/eval/run")
     async def eval_run(only: str | None = None) -> dict[str, object]:
