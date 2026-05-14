@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 
 from jazz_guru.config import get_settings
 from jazz_guru.db import session_scope
@@ -64,6 +64,16 @@ def _reset_inline_count() -> None:
     _inline_calls_made = 0
 
 
+def _advisory_key_for(session_id: uuid.UUID) -> int:
+    """Map a UUID to a stable signed int64 for ``pg_advisory_xact_lock``.
+
+    Postgres advisory locks take a bigint; the first 8 bytes of the UUID
+    give us a uniform random key with no collisions in practice. The lock
+    auto-releases at txn close.
+    """
+    return int.from_bytes(session_id.bytes[:8], "big", signed=True)
+
+
 # Outcomes are returned as plain strings (matching ImproveStatus's
 # convention in distillation/improver.py) so callers can branch in a
 # readable way without importing an enum.
@@ -89,9 +99,24 @@ async def maybe_trigger(session_id: uuid.UUID, *, reason: str) -> TriggerResult:
 
     ``reason`` is one of ``close`` / ``idle_sweep`` / ``new_session`` (free-form;
     written into the event payload for the audit trail).
+
+    Concurrency: the dedupe check + DISTILLATION_QUEUED insert are serialized
+    by a Postgres advisory lock keyed on the session id, so two concurrent
+    triggers for the same session cannot both reach the enqueue path.
+    Different sessions don't block each other. Enqueue is called inside the
+    locked transaction so its visible side effect (the queued marker) is
+    atomic with the eligibility check.
     """
-    # One read covers both the empty-check and the idempotency check.
+    lock_key = _advisory_key_for(session_id)
+    enqueue_err: str | None = None
+    queued_outcome: TriggerResult | None = None
+
     async with session_scope() as s:
+        # pg_advisory_xact_lock auto-releases at txn close. All decision
+        # paths (skipped/queued) commit their event in this same txn so
+        # the audit trail and the dedup marker land together.
+        await s.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+
         last_turn = (
             await s.execute(
                 select(func.max(Turn.started_at)).where(
@@ -108,41 +133,75 @@ async def maybe_trigger(session_id: uuid.UUID, *, reason: str) -> TriggerResult:
             )
         ).scalar_one_or_none()
 
-    if last_turn is None:
-        await _emit_skipped(session_id, reason=reason, why="empty")
-        return TriggerResult(
-            outcome=TriggerOutcome.SKIPPED_EMPTY, reason=reason, session_id=session_id
-        )
+        if last_turn is None:
+            s.add(
+                Event(
+                    session_id=session_id,
+                    type=EventType.DISTILLATION_SKIPPED.value,
+                    payload={"reason": reason, "why": "empty"},
+                )
+            )
+            return TriggerResult(
+                outcome=TriggerOutcome.SKIPPED_EMPTY,
+                reason=reason,
+                session_id=session_id,
+            )
 
-    if last_marker is not None and last_marker >= last_turn:
-        await _emit_skipped(session_id, reason=reason, why="already_distilled")
-        return TriggerResult(
-            outcome=TriggerOutcome.SKIPPED_ALREADY_DISTILLED,
+        if last_marker is not None and last_marker >= last_turn:
+            s.add(
+                Event(
+                    session_id=session_id,
+                    type=EventType.DISTILLATION_SKIPPED.value,
+                    payload={"reason": reason, "why": "already_distilled"},
+                )
+            )
+            return TriggerResult(
+                outcome=TriggerOutcome.SKIPPED_ALREADY_DISTILLED,
+                reason=reason,
+                session_id=session_id,
+            )
+
+        # Eligible. Call enqueue while still holding the lock so that
+        # success → marker insert is atomic with the eligibility read.
+        try:
+            job_id = enqueue_reflexion(session_id)
+        except Exception as e:
+            enqueue_err = str(e)
+        else:
+            s.add(
+                Event(
+                    session_id=session_id,
+                    type=EventType.DISTILLATION_QUEUED.value,
+                    payload={
+                        "reason": reason,
+                        "scheduler": "rq",
+                        "job_id": job_id,
+                    },
+                )
+            )
+            queued_outcome = TriggerResult(
+                outcome=TriggerOutcome.QUEUED,
+                reason=reason,
+                session_id=session_id,
+                job_id=job_id,
+            )
+
+    if queued_outcome is not None:
+        log.info(
+            "auto.queued",
+            session_id=str(session_id),
             reason=reason,
-            session_id=session_id,
+            job_id=queued_outcome.job_id,
         )
+        return queued_outcome
 
-    # Preferred path: queue on Redis.
-    try:
-        job_id = enqueue_reflexion(session_id)
-    except Exception as enqueue_err:
-        return await _inline_fallback(
-            session_id, reason=reason, enqueue_err=str(enqueue_err)
-        )
-
-    await log_event(
-        session_id=session_id,
-        event_type=EventType.DISTILLATION_QUEUED.value,
-        payload={"reason": reason, "scheduler": "rq", "job_id": job_id},
-    )
-    log.info(
-        "auto.queued", session_id=str(session_id), reason=reason, job_id=job_id
-    )
-    return TriggerResult(
-        outcome=TriggerOutcome.QUEUED,
-        reason=reason,
-        session_id=session_id,
-        job_id=job_id,
+    # Enqueue failed; fall through to inline-cap fallback. The advisory
+    # lock has already been released, so concurrent inline fallbacks could
+    # technically race — but the inline path has its own per-process cap
+    # and the next user turn re-arms the dedup marker either way.
+    assert enqueue_err is not None  # set by the except branch above
+    return await _inline_fallback(
+        session_id, reason=reason, enqueue_err=enqueue_err
     )
 
 
@@ -321,10 +380,25 @@ async def scan_predecessors(*, reason: str = "new_session") -> list[TriggerResul
 def sweep_job() -> dict[str, Any]:
     """Sync RQ entrypoint. Runs one sweep, then re-enqueues itself.
 
-    Re-enqueue failure (e.g. Redis dropped mid-tick) is logged but doesn't
-    propagate — RQ would otherwise mark the job failed and stop the loop.
+    Both the sweep run and the reschedule are guarded: a transient DB or
+    Redis failure on this tick must not stop the periodic chain. If the
+    reschedule fails too, the chain stops — RQ would otherwise mark the
+    job failed and never tick again.
     """
-    triggered = asyncio.run(sweep_idle())
+    try:
+        triggered = asyncio.run(sweep_idle())
+    except Exception as e:
+        log.warning("auto.sweep_failed", err=str(e))
+        triggered = []
+    # Refresh the singleton lease so other workers don't seed a parallel
+    # chain at their next boot. Best-effort: a transient Redis hiccup
+    # shouldn't break the reschedule.
+    try:
+        from jazz_guru.worker import refresh_sweep_lease
+
+        refresh_sweep_lease()
+    except Exception as e:
+        log.warning("auto.sweep_lease_refresh_failed", err=str(e))
     try:
         from jazz_guru.distillation.scheduler import schedule_idle_sweep
 

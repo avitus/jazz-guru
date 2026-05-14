@@ -186,7 +186,11 @@ def session_close(
     """
 
     async def _run() -> dict[str, object]:
-        sid = uuid.UUID(session_id)
+        try:
+            sid = uuid.UUID(session_id)
+        except ValueError as e:
+            console.print(f"[red]invalid session id: {e}[/red]")
+            raise typer.Exit(code=2) from e
         if sync:
             r = await run_reflexion(sid)
             return {"mode": "sync", "score": r.score, "critique": r.critique}

@@ -43,9 +43,17 @@ def schedule_periodic_reflexion(session_id: uuid.UUID, *, interval_sec: int = 60
 
 
 def schedule_idle_sweep(*, interval_sec: int | None = None) -> Any:
-    """Enqueue the next idle-sweep tick. Pulls the interval from settings by default."""
+    """Enqueue the next idle-sweep tick. Pulls the interval from settings by default.
+
+    Rejects non-positive intervals; with ``seconds <= 0`` the sweep_job
+    would self-reenqueue without delay and busy-loop the queue.
+    """
     settings = get_settings()
     seconds = interval_sec if interval_sec is not None else settings.jg_distill_sweep_interval_sec
+    if seconds <= 0:
+        raise ValueError(
+            f"distillation sweep interval must be > 0 seconds (got {seconds})"
+        )
     q = _queue("distillation")
     job = q.enqueue_in(
         timedelta_from_seconds(seconds),
