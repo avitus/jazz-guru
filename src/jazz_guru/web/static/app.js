@@ -339,6 +339,8 @@
     ui.msgs.innerHTML = '';
     ui.events.innerHTML = '';
     ui.artifacts.innerHTML = '';
+    ui.score.innerHTML = '';
+    osmd = null; // force renderScore to re-init against the cleared #score div
     ui.label.textContent = 'no session';
     if (ws) try { ws.close(); } catch {}
     await ensureSession();
