@@ -437,6 +437,27 @@
     });
   })();
 
+  // ----- collapsible panels -----------------------------------------
+  // events / artifacts / score collapse to just their summary bar.
+  // Persist which are collapsed so the layout survives reloads.
+  (() => {
+    const STORE_KEY = 'jg_panels_collapsed';
+    let collapsed;
+    try { collapsed = new Set(JSON.parse(localStorage.getItem(STORE_KEY) || '[]')); }
+    catch { collapsed = new Set(); }
+    for (const d of document.querySelectorAll('details.panel[data-panel]')) {
+      const key = d.dataset.panel;
+      if (collapsed.has(key)) d.open = false;
+      d.addEventListener('toggle', () => {
+        if (d.open) collapsed.delete(key); else collapsed.add(key);
+        try { localStorage.setItem(STORE_KEY, JSON.stringify([...collapsed])); } catch {}
+        // OSMD's autoResize and the column gutter both listen on window
+        // resize — nudge them so the score re-measures after the relayout.
+        window.dispatchEvent(new Event('resize'));
+      });
+    }
+  })();
+
   // boot
   (async () => {
     setStatus('connecting…');
