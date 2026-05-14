@@ -16,10 +16,10 @@ Two artifacts derive from WJazzD:
 - `wjazzd-index.json` — the compact matching index, copied from the
   `avitus/mankunku` repo (`src/lib/matching/data/wjazzd-index.json`). Per
   its `_readme` field: 456 solos, 456 phrases, built 2026-04-23.
-- `wjazzd.db` — the raw WJazzD SQLite file (v2.1 / DB version 2.2),
-  downloaded from the official Jazzomat download page. **Gitignored** (it
-  matches `*.db` in `.gitignore`) and intentionally not committed; the
-  index above is the committed, redistributable form.
+- `wjazzd.db` — the raw WJazzD SQLite file (v2.1 / DB version 2.2, ~42 MB),
+  downloaded from the official Jazzomat download page and committed here.
+  `.gitignore` blanket-ignores `*.db`; a `!data/wjazzd/wjazzd.db` exception
+  whitelists this one file.
 
 ## License
 
@@ -48,11 +48,11 @@ same license. Implications:
 
 ## Rebuilding the index
 
-The raw `wjazzd.db` is present locally but gitignored. To regenerate the
+The raw `wjazzd.db` is committed alongside the index. To regenerate the
 index, see the `avitus/mankunku` repo's `scripts/build-wjazzd-index.mjs`:
 
-1. Download `wjazzd.db` from the Jazzomat download page above (or use the
-   gitignored copy in this directory).
+1. Use the `wjazzd.db` in this directory (or download a newer release from
+   the Jazzomat download page above).
 2. Run the mankunku build script against it.
 3. Copy the resulting `wjazzd-index.json` back here.
 
