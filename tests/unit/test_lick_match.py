@@ -205,6 +205,20 @@ async def test_lick_match_midi_path_mode(registered: object, isolated_workspace:
     assert isinstance(out["matches"], list)
 
 
+async def test_lick_match_notes_mode_rejects_backward_start_beat(registered: object) -> None:
+    notes = [
+        {"pitch": 60, "start_beat": 0.0},
+        {"pitch": 62, "start_beat": 1.0},
+        {"pitch": 64, "start_beat": 0.5},  # goes backward
+    ]
+    tok = set_tool_context(ToolContext(session_id="lm-mono"))
+    try:
+        out = await registered.invoke("lick_match", {"notes": notes})
+    finally:
+        reset_tool_context(tok)
+    assert "error" in out and "non-decreasing start_beat" in out["error"]
+
+
 async def test_lick_match_requires_exactly_one_mode(registered: object) -> None:
     tok = set_tool_context(ToolContext(session_id="lm4"))
     try:

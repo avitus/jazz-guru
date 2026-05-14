@@ -81,6 +81,7 @@ class LickMatchInput(BaseModel):
 def _intervals_from_notes(notes: list[dict[str, Any]]) -> tuple[list[int], list[int]]:
     pitches: list[int] = []
     onsets: list[float] = []
+    prev_onset: float | None = None
     for i, n in enumerate(notes):
         if not isinstance(n, dict):
             raise ValueError(f"notes[{i}] must be an object with pitch and start_beat")
@@ -90,10 +91,18 @@ def _intervals_from_notes(notes: list[dict[str, Any]]) -> tuple[list[int], list[
         if "start_beat" not in n:
             raise ValueError(f"notes[{i}] is missing start_beat")
         try:
-            pitches.append(int(pitch))
-            onsets.append(float(n["start_beat"]))
+            pitch_int = int(pitch)
+            onset = float(n["start_beat"])
         except (TypeError, ValueError) as e:
             raise ValueError(f"notes[{i}] has a non-numeric pitch/start_beat: {e}") from e
+        if prev_onset is not None and onset < prev_onset:
+            raise ValueError(
+                f"notes[{i}] start_beat {onset} precedes the previous note "
+                f"({prev_onset}); notes must be ordered by non-decreasing start_beat"
+            )
+        pitches.append(pitch_int)
+        onsets.append(onset)
+        prev_onset = onset
     return encode_notes(pitches, onsets)
 
 
@@ -164,7 +173,10 @@ async def lick_match(
             ),
         }
 
-    results = search(q_intervals, q_iois, min_score=min_score, top_k=top_k)
+    try:
+        results = search(q_intervals, q_iois, min_score=min_score, top_k=top_k)
+    except FileNotFoundError as e:
+        return {"error": str(e)}
     return {
         "query_length": len(q_intervals),
         "matches": [

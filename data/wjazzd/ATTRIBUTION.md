@@ -61,7 +61,7 @@ index, see the `avitus/mankunku` repo's `scripts/build-wjazzd-index.mjs`:
 `wjazzd-index.json` is a JSON object with three keys (`_readme`,
 `sources`, `phrases`):
 
-```
+```text
 _readme : str          — build provenance + license note
 sources : SourceEntry[] — one per transcribed solo
 phrases : IndexPhrase[] — one per solo, parallel to sources by sourceId
