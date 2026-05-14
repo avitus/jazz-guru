@@ -163,6 +163,7 @@ def register_all() -> ToolRegistry:
         code_gen,
         fs,
         http,
+        lick_match,
         midi,
         music_xml,
         presets,

@@ -45,7 +45,7 @@ toolsets:
   shell:   { tools: [shell, python_exec], mode: allow }
   web:     { tools: [http_get, http_post, web_search], mode: allow }
   code:    { tools: [code_gen], mode: allow }
-  music:   { tools: [music_xml, midi, render_midi, preset_list, preset_get, preset_upsert, preset_delete], mode: allow }
+  music:   { tools: [music_xml, midi, render_midi, preset_list, preset_get, preset_upsert, preset_delete, lick_match, lick_match_info], mode: allow }
   audio:   { tools: [audio_analyze, tts], mode: allow }
   vision:  { tools: [vision], mode: allow }
   meta:    { tools: [tool_create, tool_publish, tool_remove, tool_promote_to_source, tool_list_dynamic, tool_inspect], mode: allow }
