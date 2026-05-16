@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -234,7 +234,7 @@ class Settings(BaseSettings):
     sentry_enable_logs: bool = False
     sentry_traces_sample_rate: float = 1.0
     sentry_profile_session_sample_rate: float = 1.0
-    sentry_profile_lifecycle: str = "trace"
+    sentry_profile_lifecycle: Literal["manual", "trace"] = "trace"
 
     # Tier-2 tool improvement loop (plan §B.7)
     jg_improver_threshold: int = 2  # per-tool default; overridable in tool meta
