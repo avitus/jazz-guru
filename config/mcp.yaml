@@ -1,0 +1,42 @@
+# Model Context Protocol (MCP) servers.
+#
+# Each entry under `mcp_servers:` mounts a server's tools into the agent's
+# registry under the name `mcp_<server-key>_<tool-name>`. The mcp Python SDK
+# must be installed: `pip install 'jazz-guru[mcp]'`.
+#
+# Two transports are supported:
+#   * stdio : `command` + optional `args` / `env` / `cwd`
+#   * http  : `url`     + optional `headers`
+#
+# Per-server filtering:
+#   tools:
+#     include: [name1, name2]   # whitelist (omit to allow all)
+#     exclude: [secret_tool]
+#   enabled: false              # turn the server off without removing the entry
+#
+# This file is intentionally empty by default. Uncomment / add servers as
+# needed. The server reads this on startup and on POST /mcp/reload.
+
+mcp_servers: {}
+
+# Example -- a local filesystem MCP server scoped to a project directory:
+#
+# mcp_servers:
+#   filesystem:
+#     command: npx
+#     args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/scope"]
+#     tools:
+#       exclude: [delete_file]
+#
+#   github:
+#     command: npx
+#     args: ["-y", "@modelcontextprotocol/server-github"]
+#     env:
+#       GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
+#     tools:
+#       include: [create_issue, list_issues, search_code]
+#
+#   remote_api:
+#     url: https://mcp.example.com/mcp
+#     headers:
+#       Authorization: "Bearer xxx"

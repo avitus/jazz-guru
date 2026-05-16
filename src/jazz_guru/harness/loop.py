@@ -7,9 +7,17 @@ from typing import Any
 
 from sqlalchemy import select
 
-from jazz_guru.actions import ActionController, ToolContext, reset_tool_context, set_tool_context
+from jazz_guru.actions import (
+    ActionController,
+    ToolContext,
+    reset_tool_context,
+    set_tool_context,
+)
 from jazz_guru.actions import store as tool_store
 from jazz_guru.actions.dynamic import DynamicRegistry
+from jazz_guru.actions.jobs import BackgroundJobRegistry
+from jazz_guru.actions.jobs import attach_jobs as _attach_jobs
+from jazz_guru.actions.jobs import detach_jobs as _detach_jobs
 from jazz_guru.actions.registry import registry as static_registry
 from jazz_guru.actions.tools.tool_meta import (
     reset_event_sink as _reset_meta_event_sink,
@@ -62,6 +70,9 @@ class AgentLoop:
         self.session = session
         self.trace = TraceWriter(session.id)
         self.dynamic = DynamicRegistry()
+        # Background jobs persist for the lifetime of the AgentLoop (i.e. the
+        # session): a render started in turn 1 should be inspectable in turn 5.
+        self.jobs = BackgroundJobRegistry()
         self.controller = controller or ActionController(on_event=self._on_event)
         self.builder = builder or ContextBuilder()
         self.memory = memory or get_memory()
@@ -148,12 +159,23 @@ class AgentLoop:
         playbook = await self._load_playbook()
         state_doc = self._state_doc()
 
+        # Compute the current allowed tool set so skills can be filtered by
+        # their requires_tools / fallback_when_tools clauses. We do this
+        # BEFORE attaching the dynamic registry below; the controller will
+        # recompute fresh per round, this is just for the prompt's metadata
+        # block (a small skill list mismatched by one round is harmless).
+        try:
+            allowed_tools = self.controller._allowed_set()  # type: ignore[attr-defined]
+        except Exception:
+            allowed_tools = None
+
         prompt = self.builder.build(BuildInputs(
             user_message=user_input,
             history=self.session.history,
             state_doc=state_doc.render_markdown(),
             retrieved_memory=retrieved,
             playbook_excerpts=playbook,
+            allowed_tools=allowed_tools,
         ))
 
         await self._hydrate_dynamic_registry()
@@ -163,6 +185,9 @@ class AgentLoop:
         # here automatically appear there — no explicit push needed.
         dyn_token = static_registry.attach_dynamic(self.dynamic)
         meta_token = _set_meta_event_sink(self._on_event)
+        # Background job registry is per-session but bound via ContextVar for
+        # the turn so concurrent sessions don't see each other's jobs.
+        jobs_token = _attach_jobs(self.jobs)
 
         tok = set_tool_context(ToolContext(session_id=str(self.session.id), turn_idx=idx))
         try:
@@ -171,6 +196,7 @@ class AgentLoop:
             reset_tool_context(tok)
             static_registry.detach_dynamic(dyn_token)
             _reset_meta_event_sink(meta_token)
+            _detach_jobs(jobs_token)
 
         await self._record_turn(
             idx=idx + 1,

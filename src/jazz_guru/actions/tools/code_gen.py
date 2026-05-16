@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from jazz_guru.actions.context import current
 from jazz_guru.actions.registry import registry
 from jazz_guru.actions.sandbox import resolve_in_workspace
+from jazz_guru.actions.tools.patch import _patch_file
 
 
 class CodeGenInput(BaseModel):
@@ -37,24 +38,27 @@ async def code_gen(path: str, content: str, overwrite: bool = True) -> dict[str,
 
 @registry.register(
     "code_edit",
-    description="Find-and-replace edit a workspace file. old_str must occur exactly once unless change_all=true.",
+    description=(
+        "Find-and-replace edit a workspace file. Thin back-compat wrapper around "
+        "`patch` — tries exact first, then line-trimmed, then fuzzy match. Set "
+        "change_all=true to allow multiple exact matches. Prefer `patch` for new "
+        "code: it exposes min_ratio and a syntax-check toggle and returns a "
+        "unified diff."
+    ),
     input_model=CodeEditInput,
     tags=("code",),
 )
-async def code_edit(path: str, old_str: str, new_str: str, change_all: bool = False) -> dict[str, object]:
-    p = resolve_in_workspace(path, current().session_id)
-    if not old_str:
-        # str.count("") returns len(text)+1 — an empty old_str would silently
-        # become an insert-at-every-boundary operation. Refuse it.
-        return {"path": str(p), "edited": False, "reason": "old_str must not be empty"}
-    if not p.exists():
-        return {"path": str(p), "edited": False, "reason": "missing file"}
-    text = p.read_text(encoding="utf-8")
-    count = text.count(old_str)
-    if count == 0:
-        return {"path": str(p), "edited": False, "reason": "old_str not found"}
-    if count > 1 and not change_all:
-        return {"path": str(p), "edited": False, "reason": f"old_str matches {count} times; set change_all=true"}
-    new_text = text.replace(old_str, new_str) if change_all else text.replace(old_str, new_str, 1)
-    p.write_text(new_text, encoding="utf-8")
-    return {"path": str(p), "edited": True, "replacements": count if change_all else 1}
+async def code_edit(
+    path: str, old_str: str, new_str: str, change_all: bool = False
+) -> dict[str, object]:
+    return await _patch_file(
+        path,
+        old_str,
+        new_str,
+        change_all=change_all,
+        # Default min_ratio of 1.0 preserves the strict behavior the old
+        # code_edit had (exact + line-trimmed only). Callers that want fuzzy
+        # matching should use the `patch` tool directly.
+        min_ratio=1.0,
+        syntax_check=True,
+    )

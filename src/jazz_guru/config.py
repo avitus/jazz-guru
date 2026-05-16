@@ -120,6 +120,12 @@ class Settings(BaseSettings):
     )
 
     # LLM
+    # The Anthropic SDK refuses non-streaming requests where the worst-case
+    # generation time exceeds 10 minutes. Per
+    # `_calculate_nonstreaming_timeout` in the SDK, the threshold is
+    # `max_tokens > 600 * 128_000 / 3600 ≈ 21333` for non-streaming. 16000
+    # leaves a safe margin. Raise this only when `complete()` is also taught
+    # to use `messages.stream(...)`.
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5"
     anthropic_max_tokens: int = 16000
@@ -168,6 +174,38 @@ class Settings(BaseSettings):
 
     # Music / audio
     fluidsynth_soundfont: str = ""
+
+    # Music backend selection (see jazz_guru.music.registry). All optional —
+    # "none" disables the role; "librosa" is the always-available baseline
+    # for beat / understanding. Specialised backends (basic_pitch, omnizart,
+    # mt3, music_flamingo, magenta_rt, elevenlabs_music) lazy-import their
+    # dependency and degrade gracefully when it is not installed.
+    music_transcription_backend: str = "none"
+    music_analysis_backend: str = "librosa"
+    music_understanding_backend: str = "none"
+    music_generation_backend: str = "none"
+    # MT3 has no stable Python API. If set, JG_MT3_CLI is shelled out as
+    # `<cli> --input <audio> --output <midi>`; otherwise the adapter
+    # tries to import `mt3.inference` directly.
+    jg_mt3_cli: str = ""
+    jg_mt3_cli_timeout_sec: float = 600.0
+    # Hugging Face model id for the Music Flamingo backend. `-hf` is the
+    # base model; `-chat` is the instruction-tuned variant.
+    music_flamingo_model: str = "nvidia/audio-flamingo-3-hf"
+    music_flamingo_prompt: str = (
+        "Describe this music in detail. Include the most likely key, tempo (BPM), "
+        "time signature, style, and any notable structural sections. "
+        "Be concise but specific."
+    )
+    music_flamingo_max_new_tokens: int = 256
+    # Magenta RealTime: same CLI/python dual-path as MT3. The CLI must
+    # accept `--prompt <text> --duration <sec> --output <wav>`.
+    jg_magenta_rt_cli: str = ""
+    jg_magenta_rt_cli_timeout_sec: float = 300.0
+    # ElevenLabs Music: hosted music generation. ELEVENLABS_API_KEY is
+    # required; ELEVENLABS_MUSIC_MODEL pins a specific model id.
+    elevenlabs_api_key: str = ""
+    elevenlabs_music_model: str = "music_v1"
 
     # Feature flags
     feature_tts: int = 0

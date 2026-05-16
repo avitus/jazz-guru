@@ -6,6 +6,7 @@ import json
 import mimetypes
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from jazz_guru import auth
+from jazz_guru.actions.mcp import MCPManager
 from jazz_guru.config import get_goal, get_settings
 from jazz_guru.distillation import (
     enqueue_reflexion,
@@ -32,6 +34,8 @@ from jazz_guru.state import list_session_artifacts
 log = get_logger(__name__)
 
 WEB_STATIC = Path(__file__).resolve().parent / "web" / "static"
+WEB_MANUAL = Path(__file__).resolve().parent / "web" / "user_manual"
+ARCH_PDF = Path(__file__).resolve().parent.parent.parent / "docs" / "architecture.pdf"
 
 
 class CreateSessionBody(BaseModel):
@@ -69,13 +73,52 @@ def _ws_token_and_subproto(ws: WebSocket) -> tuple[str | None, str | None]:
     return None, None
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Start/stop the MCP manager alongside the FastAPI lifecycle.
+
+    Errors during start are logged but don't abort server startup — a misconfigured
+    MCP server shouldn't prevent the rest of the agent from running.
+    """
+    mgr = MCPManager()
+    app.state.mcp = mgr
+    try:
+        await mgr.start_all()
+    except Exception as e:
+        log.warning("mcp.lifespan_start_failed", err=str(e))
+    try:
+        yield
+    finally:
+        try:
+            await mgr.stop_all()
+        except Exception as e:
+            log.warning("mcp.lifespan_stop_failed", err=str(e))
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="jazz-guru", version="0.1.0")
+    app = FastAPI(title="jazz-guru", version="0.1.0", lifespan=_lifespan)
     sm = SessionManager()
     auth.install(app)
 
     if WEB_STATIC.exists():
         app.mount("/ui", StaticFiles(directory=str(WEB_STATIC), html=True), name="ui")
+
+    # The user manual is a static companion to docs/architecture.pdf; we also
+    # expose the PDF itself under the same prefix so links inside the manual
+    # resolve without needing a separate route.
+    has_user_manual = WEB_MANUAL.exists()
+    if has_user_manual:
+        @app.get("/user_manual/architecture.pdf")
+        async def _manual_pdf() -> FileResponse:
+            if not ARCH_PDF.is_file():
+                raise HTTPException(404, "architecture.pdf not found")
+            return FileResponse(str(ARCH_PDF), media_type="application/pdf")
+
+        app.mount(
+            "/user_manual",
+            StaticFiles(directory=str(WEB_MANUAL), html=True),
+            name="user_manual",
+        )
 
     # ---------- index ----------------------------------------------------
     @app.get("/", response_class=HTMLResponse)
@@ -96,6 +139,8 @@ def create_app() -> FastAPI:
             ("GET",  "/artifacts/{id}/{path}",             "download a session artifact"),
             ("WS",   "/ws/sessions/{id}/chat",             "streaming tool events"),
         ]
+        if has_user_manual:
+            rows.insert(1, ("GET", "/user_manual/", "architecture &amp; user manual"))
         body = "\n".join(
             f'<tr><td class="m m-{m.lower()}">{m}</td>'
             f'<td><a href="{p if "{" not in p and m=="GET" else "#"}"><code>{p}</code></a></td>'
@@ -120,6 +165,7 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
   <span class="tag">profile: {g.profile}</span>
   <span class="tag">objectives: {len(g.objectives)}</span>
   <a href="/ui/">graphical UI &rarr;</a> &nbsp;
+  {'<a href="/user_manual/">user manual &rarr;</a> &nbsp;' if has_user_manual else ''}
   <a href="/docs">interactive API docs &rarr;</a>
 </div>
 <table>{body}</table>"""
@@ -235,6 +281,28 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
     @app.post("/eval/run")
     async def eval_run(only: str | None = None) -> dict[str, object]:
         return await run_all(only=only)
+
+    @app.get("/mcp/status")
+    async def mcp_status() -> dict[str, Any]:
+        mgr: MCPManager | None = getattr(app.state, "mcp", None)
+        if mgr is None:
+            return {"ok": False, "error": "MCP manager not initialized"}
+        return {"ok": True, **mgr.status()}
+
+    @app.post("/mcp/reload")
+    async def mcp_reload() -> dict[str, Any]:
+        mgr: MCPManager | None = getattr(app.state, "mcp", None)
+        if mgr is None:
+            return {"ok": False, "error": "MCP manager not initialized"}
+        try:
+            # The settings cache is process-wide; without clearing, an MCP
+            # reload would still see the stale .env / YAML values that this
+            # long-lived process started with.
+            get_settings.cache_clear()
+            await mgr.reload()
+        except Exception as e:
+            raise HTTPException(500, f"mcp reload failed: {e}") from e
+        return {"ok": True, **mgr.status()}
 
     @app.post("/memory/search")
     async def memory_search(body: MemorySearchBody) -> dict[str, object]:
@@ -397,16 +465,61 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
 
         agent._on_event = fanout  # type: ignore[method-assign]
         agent.controller.on_event = fanout
+
+        # Split the incoming WS frames into two queues: chat messages drive
+        # the turn loop, clarify_response frames feed the clarify callback.
+        # Without this dispatcher, the clarify callback would race with the
+        # main `receive_text()` loop.
+        # ``None`` is a sentinel meaning "the reader detected disconnect" --
+        # it unblocks any pending .get() so consumers can shut down cleanly
+        # instead of hanging forever on a dead socket.
+        chat_q: asyncio.Queue[str | None] = asyncio.Queue()
+        clarify_q: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def _reader() -> None:
+            try:
+                while True:
+                    raw = await ws.receive_text()
+                    try:
+                        msg = json.loads(raw)
+                    except Exception:
+                        msg = {"message": raw}
+                    if not isinstance(msg, dict):
+                        continue
+                    frame_type = str(msg.get("type") or "chat")
+                    if frame_type == "clarify_response":
+                        await clarify_q.put(str(msg.get("answer", "")))
+                        continue
+                    user_text = str(msg.get("message", ""))
+                    if user_text:
+                        await chat_q.put(user_text)
+            except WebSocketDisconnect:
+                # Wake both consumers so they can stop instead of blocking.
+                await chat_q.put(None)
+                await clarify_q.put(None)
+            except Exception as e:
+                # Any other reader failure also has to unblock the consumers;
+                # otherwise the chat / clarify loops below would await forever.
+                log.warning("ws.reader_error", err=str(e))
+                await chat_q.put(None)
+                await clarify_q.put(None)
+
+        async def _clarify_callback(payload: dict[str, Any]) -> str:
+            # The event was already emitted by the controller, fanned out to
+            # the WS via `fanout`. Just block until the operator replies.
+            answer = await clarify_q.get()
+            if answer is None:
+                raise RuntimeError("websocket disconnected before clarify response")
+            return answer
+
+        agent.controller.clarify_callback = _clarify_callback
+        reader_task = asyncio.create_task(_reader())
         try:
             while True:
-                raw = await ws.receive_text()
-                try:
-                    msg = json.loads(raw)
-                    user_text = msg.get("message", "")
-                except Exception:
-                    user_text = raw
-                if not user_text:
-                    continue
+                user_text = await chat_q.get()
+                if user_text is None:
+                    # Reader signalled disconnect.
+                    raise WebSocketDisconnect()
                 await ws.send_json({"type": "ack", "message": user_text})
                 res = await agent.step(user_text)
                 # publish artifact list after the turn so UIs can refresh
@@ -432,6 +545,10 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
             log.warning("ws.error", err=str(e))
             with contextlib.suppress(Exception):
                 await ws.send_json({"type": "error", "error": str(e)})
+        finally:
+            reader_task.cancel()
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await reader_task
 
     return app
 
