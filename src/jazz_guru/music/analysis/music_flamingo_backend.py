@@ -59,7 +59,13 @@ def _extract_fields(text: str) -> dict[str, Any]:
     for pat in _KEY_PATTERNS:
         match = pat.search(text)
         if match:
-            out["detected_key"] = match.group(1).strip()
+            key = match.group(1).strip()
+            # Canonicalize maj/min → major/minor so downstream label-based
+            # comparison (see music.analyze._pitch_feedback) doesn't flag
+            # "A maj" as mismatching "A major".
+            key = re.sub(r"\bmaj\b", "major", key, flags=re.IGNORECASE)
+            key = re.sub(r"\bmin\b", "minor", key, flags=re.IGNORECASE)
+            out["detected_key"] = key
             break
     tempo_match = _TEMPO_PATTERN.search(text)
     if tempo_match:

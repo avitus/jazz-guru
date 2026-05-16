@@ -103,8 +103,10 @@ async def _mutate_todos(
             # Surface as an explicit failure rather than a silent no-op write —
             # otherwise add/set/clear would report success without persisting.
             return None, None
-        meta = dict(row.meta or {})
+        meta = dict(row.meta) if isinstance(row.meta, dict) else {}
         current_list = meta.get("todos", [])
+        if not isinstance(current_list, list):
+            current_list = []
         todos = [t for t in current_list if isinstance(t, dict)]
         new_todos, extra = mutator(list(todos))
         meta["todos"] = new_todos

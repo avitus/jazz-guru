@@ -106,7 +106,8 @@ def create_app() -> FastAPI:
     # The user manual is a static companion to docs/architecture.pdf; we also
     # expose the PDF itself under the same prefix so links inside the manual
     # resolve without needing a separate route.
-    if WEB_MANUAL.exists():
+    has_user_manual = WEB_MANUAL.exists()
+    if has_user_manual:
         @app.get("/user_manual/architecture.pdf")
         async def _manual_pdf() -> FileResponse:
             if not ARCH_PDF.is_file():
@@ -125,7 +126,6 @@ def create_app() -> FastAPI:
         g = get_goal()
         rows = [
             ("GET",  "/ui/",                               "graphical web UI"),
-            ("GET",  "/user_manual/",                      "architecture &amp; user manual"),
             ("GET",  "/health",                            "liveness check"),
             ("GET",  "/goal",                              "rendered goal block"),
             ("GET",  "/docs",                              "Swagger UI"),
@@ -139,6 +139,8 @@ def create_app() -> FastAPI:
             ("GET",  "/artifacts/{id}/{path}",             "download a session artifact"),
             ("WS",   "/ws/sessions/{id}/chat",             "streaming tool events"),
         ]
+        if has_user_manual:
+            rows.insert(1, ("GET", "/user_manual/", "architecture &amp; user manual"))
         body = "\n".join(
             f'<tr><td class="m m-{m.lower()}">{m}</td>'
             f'<td><a href="{p if "{" not in p and m=="GET" else "#"}"><code>{p}</code></a></td>'
@@ -163,7 +165,7 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
   <span class="tag">profile: {g.profile}</span>
   <span class="tag">objectives: {len(g.objectives)}</span>
   <a href="/ui/">graphical UI &rarr;</a> &nbsp;
-  <a href="/user_manual/">user manual &rarr;</a> &nbsp;
+  {'<a href="/user_manual/">user manual &rarr;</a> &nbsp;' if has_user_manual else ''}
   <a href="/docs">interactive API docs &rarr;</a>
 </div>
 <table>{body}</table>"""
