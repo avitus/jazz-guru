@@ -21,3 +21,7 @@ workspace/
 .DS_Store
 .idea/
 .vscode/
+
+# chunk active sidecar tracking
+.chunk/sidecar.json
+.chunk/sidecar.*.json
