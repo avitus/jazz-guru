@@ -219,6 +219,20 @@ class Settings(BaseSettings):
     otel_service_name: str = "jazz-guru"
     otel_exporter_otlp_endpoint: str = ""
 
+    # Sentry. DSNs are public-facing tokens (also embedded in browser JS) so
+    # a default is committed; override via .env or set sentry_dsn="" to
+    # disable. init_sentry() is a no-op when the DSN is empty, which keeps
+    # tests / forks quiet by default if the operator opts out.
+    sentry_dsn: str = (
+        "https://624346481dee584ffa2ebde75afbeb88@o135479.ingest.us.sentry.io/4511401433890816"
+    )
+    sentry_environment: str = "dev"
+    sentry_send_default_pii: bool = True
+    sentry_enable_logs: bool = True
+    sentry_traces_sample_rate: float = 1.0
+    sentry_profile_session_sample_rate: float = 1.0
+    sentry_profile_lifecycle: str = "trace"
+
     # Tier-2 tool improvement loop (plan §B.7)
     jg_improver_threshold: int = 2  # per-tool default; overridable in tool meta
     jg_improver_max_per_run: int = 3  # max maybe_improve calls per reflexion

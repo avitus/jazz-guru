@@ -8,6 +8,7 @@ from rq import Queue, Worker
 
 from jazz_guru.config import get_settings
 from jazz_guru.logging import get_logger
+from jazz_guru.observability import init_sentry
 
 log = get_logger(__name__)
 
@@ -70,6 +71,7 @@ def get_queues() -> list[Queue]:
 
 
 def run() -> None:
+    init_sentry()
     log.info("worker.starting", queues=QUEUE_NAMES)
     queues = get_queues()
     # Seed the auto-distillation idle sweep, but only if we win the

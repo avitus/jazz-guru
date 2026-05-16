@@ -21,6 +21,10 @@ from jazz_guru.distillation import (
 from jazz_guru.eval import run_all
 from jazz_guru.harness import AgentLoop, SessionManager
 from jazz_guru.llm import health_check_detailed
+from jazz_guru.observability import init_sentry
+
+# Initialize Sentry once per CLI process. No-op when SENTRY_DSN is empty.
+init_sentry()
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="jazz-guru agent harness CLI")
 app.add_typer(tool_app, name="tool")
