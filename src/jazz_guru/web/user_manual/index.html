@@ -630,12 +630,18 @@ async def fs_read(**kwargs) -&gt; dict:
       <tr><td>music · analysis &amp; workflows</td>
           <td><code>analyze_practice_take</code>, <code>build_backing_track</code>, <code>generate_exercise</code>, <code>generate_music</code></td>
           <td>Practice-take pipeline (Basic Pitch / Omnizart / MT3 / Music Flamingo, lazy), symbolic backing tracks, MusicXML exercises, optional Magenta&nbsp;RT / ElevenLabs generation. See <a href="#music">&sect;11</a>.</td></tr>
+      <tr><td>music · lick lookup</td>
+          <td><code>lick_match</code>, <code>lick_match_info</code></td>
+          <td>Read-only search over the Weimar Jazz Database (456 solos). Accepts a MIDI path, a monophonic note list, or pre-computed interval/IOI vectors; returns ranked matches with ODbL attribution. Backed by <span class="file">src/jazz_guru/<b>lickmatch.py</b></span>.</td></tr>
       <tr><td>perception</td>
           <td><code>audio_analyze</code>, <code>vision</code>, <code>tts</code></td>
           <td>librosa-based audio analysis, image understanding via vision, optional TTS (<code>FEATURE_TTS=1</code>).</td></tr>
       <tr><td>meta · self-authoring</td>
           <td><code>tool_create</code>, <code>tool_publish</code>, <code>tool_promote_to_source</code>, <code>tool_remove</code>, <code>tool_list_dynamic</code>, <code>tool_inspect</code></td>
           <td>The dynamic-tool surface. See <a href="#dynamic">&sect;5</a>.</td></tr>
+      <tr><td>meta · tool tests</td>
+          <td><code>tool_test_add</code>, <code>tool_test_remove</code>, <code>tool_test_list</code>, <code>tool_test_run</code></td>
+          <td>Attach predicate / rubric test cases to published Tier-2 tools and execute them. Required for the reflexion-driven improver to consider a tool. See <a href="#dynamic">&sect;5</a>.</td></tr>
       <tr><td>notes</td>
           <td><code>notes_read</code>, <code>notes_write</code>, <code>notes_patch</code></td>
           <td>Always-loaded persistent facts (<code>AGENT_NOTES.md</code>).</td></tr>
@@ -668,7 +674,8 @@ async def fs_read(**kwargs) -&gt; dict:
     <dt>toolsets</dt>
     <dd>Named groups (<code>core</code>, <code>fs</code>, <code>shell</code>,
         <code>web</code>, <code>code</code>, <code>music</code>, <code>audio</code>,
-        <code>vision</code>, <code>meta</code>). Per-name entries always win.</dd>
+        <code>vision</code>, <code>meta</code>, <code>testing</code>). Per-name
+        entries always win.</dd>
     <dt>budgets</dt>
     <dd><code>per_turn.tool_calls</code> &mdash; doubles as the controller's
         <code>max_rounds</code>. <code>per_turn.wall_clock_sec</code>,
@@ -801,13 +808,140 @@ async def fs_read(**kwargs) -&gt; dict:
       the operator decides when to bake one in.</p>
     </div>
   </div>
+
+  <h3>Tier-2 tests &amp; the improvement loop</h3>
+  <p>
+    Tier-2 tools are durable, so they earn a self-healing layer. The agent
+    attaches test cases to a published tool, the reflexion loop notices when
+    that tool keeps failing, and a separate LLM call proposes a patched source
+    file. The patch only lands if the existing suite plus any newly-proposed
+    cases pass against the candidate &mdash; otherwise the existing version
+    keeps serving traffic. Full design:
+    <span class="file">docs/plans/<b>tier2-tool-tests-and-improvement.md</b></span>.
+  </p>
+
+  <div class="boxes">
+    <div class="box k">
+      <h4>predicate DSL</h4>
+      <p><span class="file">testing/<b>predicates.py</b></span></p>
+      <p>JSON-tree assertions: <code>eq</code>, <code>ne</code>,
+         <code>gt/gte/lt/lte</code>, <code>len</code>, <code>contains</code>,
+         <code>regex</code>, <code>type</code>, <code>absent</code>,
+         <code>present</code>, <code>all</code>, <code>any</code>. Paths use
+         dots, <code>[N]</code>, and <code>[*]</code> quantifiers. No
+         <code>eval</code>; pure logic.</p>
+    </div>
+    <div class="box k2">
+      <h4>runner</h4>
+      <p><span class="file">testing/<b>runner.py</b></span></p>
+      <p>Runs each case through the same <code>python -I</code> subprocess as
+         the tool itself. Predicates are evaluated locally; rubric cases pipe
+         the result through <code>eval.judge</code> when opted in.</p>
+    </div>
+    <div class="box k3">
+      <h4>failure mining</h4>
+      <p><span class="file">testing/<b>failure_signals.py</b></span></p>
+      <p>Walks the session trace, pairs each <code>tool_use</code> with its
+         <code>tool_result</code>, and groups three failure modes per tool:
+         handler-raised (<code>ok: False</code>), policy denial, and dynamic
+         subprocess errors (<code>result_has_error</code>).</p>
+    </div>
+  </div>
+
+  <h4>Agent-facing meta-tools</h4>
+  <p>
+    All four register under the <code>testing</code> toolset and persist
+    runs into <code>generated_tool_test_runs</code>:
+  </p>
+  <ul>
+    <li><code>tool_test_add(name, case_name, case_spec, enabled=True)</code>
+        &mdash; idempotent on <code>(tool, case_name)</code>;
+        <code>case_spec</code> is <code>{case: {input, predicate?},
+        rubric?, timeout_sec?}</code>.</li>
+    <li><code>tool_test_remove(name, case_name, disable_only=False)</code>
+        &mdash; deletes, or just flips <code>enabled=False</code> if you
+        want to keep run history.</li>
+    <li><code>tool_test_list(name, include_disabled=False)</code> &mdash;
+        spec and last-run status per case.</li>
+    <li><code>tool_test_run(name, case_name?, use_judge=False)</code> &mdash;
+        run the suite or a single case; the result row is what the improver
+        consumes.</li>
+  </ul>
+  <p>
+    <code>tool_publish</code> auto-attaches a <code>smoke_recorded</code>
+    case derived from the most recent successful invocation in the session
+    trace &mdash; the freshly-published tool starts with at least one case
+    even if the agent forgets to write one.
+  </p>
+
+  <h4>The improver &mdash;
+    <span class="file">distillation/<b>improver.py</b></span></h4>
+  <p>
+    Invoked at the tail end of <code>run_reflexion</code> for any tool whose
+    failure count crossed its threshold. One LLM call yields a strict-JSON
+    proposal:
+  </p>
+  <pre><code>{
+  "source": "...",            // full replacement file
+  "rationale": "...",
+  "new_test_cases": [...],
+  "schema_unchanged": true    // false rejects the proposal outright
+}</code></pre>
+  <p>
+    The candidate is run against the full existing suite plus the proposed
+    new cases via <code>testing.runner</code>. Only an all-green run commits
+    via <code>store.upsert(origin="improver")</code>, which snapshots the
+    prior row into <code>generated_tool_versions</code> for one-row
+    rollback. Failed proposals bump <code>consecutive_failures</code>;
+    reaching <code>MAX_ATTEMPTS=3</code> sets <code>improve_locked</code>
+    in the tool's <code>meta</code>, after which only
+    <code>jazz-guru tool unlock &lt;name&gt;</code> lets the improver try
+    again. Per-reflexion fan-out is capped by
+    <code>JG_IMPROVER_MAX_PER_RUN</code> (default 3); the per-tool
+    threshold is <code>JG_IMPROVER_THRESHOLD</code> (default 2, overridable
+    via <code>tool.meta.improve_threshold</code>).
+  </p>
+
+  <h4>CLI surface &mdash;
+    <span class="file"><b>cli_tool.py</b></span></h4>
+  <div class="table-wrap">
+  <table class="tbl">
+    <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>jazz-guru tool list</code></td>
+          <td>All published Tier-2 tools with version, test count, and lock state.</td></tr>
+      <tr><td><code>jazz-guru tool show &lt;name&gt;</code></td>
+          <td>Current source, schema, attached tests, full version history.</td></tr>
+      <tr><td><code>jazz-guru tool test &lt;name&gt; [--case &lt;c&gt;] [--judge]</code></td>
+          <td>Run the suite (or one case) and print pass/fail per case.</td></tr>
+      <tr><td><code>jazz-guru tool diff &lt;name&gt; &lt;v1&gt; [&lt;v2&gt;]</code></td>
+          <td>Unified diff between two versions; omit <code>v2</code> to diff against the current live source.</td></tr>
+      <tr><td><code>jazz-guru tool rollback &lt;name&gt; --to &lt;v&gt;</code></td>
+          <td>Restore version <code>v</code>; the current source is snapshotted first so version numbers stay monotonic.</td></tr>
+      <tr><td><code>jazz-guru tool unlock &lt;name&gt;</code></td>
+          <td>Clear <code>improve_locked</code> and reset <code>consecutive_failures</code>. Operator-only &mdash; the agent cannot self-clear.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout note">
+    <span class="ico">i</span>
+    <div>
+      <p><strong>No tests, no improvement.</strong> A Tier-2 tool with zero
+      attached cases is silently skipped by the improver &mdash; without a
+      ground truth there is no way to gate a proposed patch. The
+      <code>smoke_recorded</code> case auto-attached by
+      <code>tool_publish</code> is the lowest bar; agents are nudged to add
+      more.</p>
+    </div>
+  </div>
 </section>
 
 <!-- ===== 06 DATABASE SCHEMA ===== -->
 <section id="db" class="s">
   <h2><span class="num">06</span>Database schema</h2>
   <p class="lede">
-    Postgres + pgvector. Eight tables managed by Alembic. All async access
+    Postgres + pgvector. Eleven tables managed by Alembic. All async access
     through <code>db.session_scope()</code>; the synchronous URL exists only
     for migrations.
   </p>
@@ -852,7 +986,33 @@ async def fs_read(**kwargs) -&gt; dict:
           <td><code>name</code> UNIQUE, <code>input_schema JSON</code>,
               <code>source</code>, <code>sha256</code>,
               <code>scope</code>, <code>owner_session_id</code>,
-              <code>version</code>, <code>deprecated</code>.</td></tr>
+              <code>version</code>, <code>deprecated</code>,
+              <code>meta JSON</code> (carries
+              <code>improve_locked</code>,
+              <code>consecutive_failures</code>,
+              <code>improve_threshold</code>).</td></tr>
+      <tr><td><code>generated_tool_versions</code></td>
+          <td>History snapshots; one row per past version of a Tier-2 tool.</td>
+          <td><code>name</code>, <code>version</code>,
+              <code>source</code>, <code>sha256</code>,
+              <code>input_schema JSON</code>, <code>origin</code>
+              (<code>agent</code> / <code>improver</code> /
+              <code>rollback</code>), <code>rationale</code>,
+              <code>superseded_by</code>. <code>store.upsert</code>
+              writes here transactionally before mutating
+              <code>generated_tools</code>; rollback is one row.</td></tr>
+      <tr><td><code>generated_tool_tests</code></td>
+          <td>Per-tool test suite (predicate + optional rubric).</td>
+          <td><code>tool_id</code> FK, <code>name</code> (unique per tool),
+              <code>spec JSON</code> (case body), <code>origin</code>
+              (<code>agent_authored</code> / <code>smoke_recorded</code> /
+              <code>improver_authored</code>), <code>enabled</code>.</td></tr>
+      <tr><td><code>generated_tool_test_runs</code></td>
+          <td>Append-only execution log feeding the improver and CLI.</td>
+          <td><code>test_id</code> FK, <code>tool_version</code>,
+              <code>passed</code>, <code>ms</code>,
+              <code>judge_score</code>, <code>failures JSON</code>,
+              <code>error</code>, <code>ts</code>.</td></tr>
       <tr><td><code>eval_runs</code></td>
           <td>One row per task per regression run.</td>
           <td><code>task_id</code>, <code>session_id</code>,
@@ -975,7 +1135,7 @@ class StateDoc:
     next session will see automatically.
   </p>
 
-  <h3>Two triggers</h3>
+  <h3>Two manual triggers</h3>
   <div class="boxes">
     <div class="box k">
       <h4>async (default)</h4>
@@ -993,6 +1153,42 @@ class StateDoc:
          &mdash; no Redis hop. Useful in tests and one-off runs.</p>
     </div>
   </div>
+
+  <h3>Three automatic triggers &mdash;
+    <span class="file">distillation/<b>auto.py</b></span></h3>
+  <p>
+    Manual trigger calls are still supported, but most sessions don't need
+    one. Three signals are funnelled through <code>maybe_trigger</code> so
+    deduplication and scheduling live in a single place:
+  </p>
+  <dl class="def">
+    <dt>explicit close</dt>
+    <dd><code>POST /sessions/{id}/close</code> or
+        <code>jazz-guru session close &lt;sid&gt;</code>. The session is
+        <em>not</em> marked closed in the DB; the next assistant turn just
+        re-arms the trigger.</dd>
+    <dt>idle-timeout sweep</dt>
+    <dd>The RQ worker re-enqueues <code>sweep_job</code> every
+        <code>JG_DISTILL_SWEEP_INTERVAL_SEC</code> (default 300 s) and
+        picks up any session whose newest assistant turn is older than
+        <code>JG_DISTILL_IDLE_SEC</code> (default 600 s).</dd>
+    <dt>new-session predecessor scan</dt>
+    <dd>On every <code>POST /sessions</code>, a background task scans the
+        DB for idle, undistilled predecessor sessions and queues them
+        before the new session's first turn. Disable via
+        <code>JG_DISTILL_ON_NEW_SESSION=false</code>.</dd>
+  </dl>
+  <p>
+    Idempotency rule: a session is "undistilled" iff its newest assistant
+    <code>Turn.started_at</code> is newer than its newest
+    <code>reflexion</code> / <code>distillation_queued</code> /
+    <code>distillation_inline</code> event. Concurrent triggers serialise
+    on a Postgres advisory lock keyed by session UUID. When Redis is down,
+    <code>maybe_trigger</code> falls back to running reflexion inline up
+    to <code>JG_DISTILL_INLINE_MAX_PER_PROCESS</code> times per process
+    (default 1, resets on restart) and then emits
+    <code>distillation_skipped</code> until the worker comes back.
+  </p>
 
   <h3>The flow &mdash; <span class="file">distillation/<b>reflexion.py</b></span></h3>
   <ol>
@@ -1050,6 +1246,21 @@ class StateDoc:
         <code>open_threads</code> / <code>last_critique</code> into the system
         prompt via <code>StateDoc</code>.</li>
   </ul>
+
+  <h3>The improvement pass</h3>
+  <p>
+    After the regular writeback, <code>_run_improvement_pass(sid)</code> mines
+    the session trace via <a href="#dynamic">testing.failure_signals</a> and
+    dispatches <code>distillation.improver.maybe_improve</code> for any Tier-2
+    tool that crossed its threshold. Total fan-out per reflexion is capped
+    (<code>JG_IMPROVER_MAX_PER_RUN</code>, default 3); tools without attached
+    tests are skipped silently. The result is the
+    <code>tool_improve_proposed</code>, <code>_passed</code>,
+    <code>_failed</code>, and (on operator-initiated rollback)
+    <code>tool_rollback</code> events you'll see in the trace. The full
+    contract lives in
+    <span class="file">docs/plans/<b>tier2-tool-tests-and-improvement.md</b></span>.
+  </p>
 </section>
 
 <!-- ===== 09 EVAL ===== -->
@@ -1436,6 +1647,15 @@ ELEVENLABS_MUSIC_MODEL=music_v1</code></pre>
       <tr><td><code>DATABASE_URL_SYNC</code></td><td><em>required</em></td><td>alembic-only sync URL.</td></tr>
       <tr><td><code>REDIS_URL</code></td><td><em>required for worker</em></td><td>RQ queue backend.</td></tr>
       <tr><td><code>FEATURE_TTS</code></td><td>unset</td><td>Feature flag gating the <code>tts</code> tool.</td></tr>
+      <tr><td colspan="3" style="background:#f8fafc;font-weight:600;font-size:11px;color:#475569;letter-spacing:0.05em;text-transform:uppercase">auto-distillation triggers (<a href="#reflexion">&sect;8</a>)</td></tr>
+      <tr><td><code>JG_DISTILL_ON_CLOSE</code></td><td><code>true</code></td><td>Fire reflexion on the explicit close endpoint / CLI.</td></tr>
+      <tr><td><code>JG_DISTILL_ON_NEW_SESSION</code></td><td><code>true</code></td><td>Scan idle, undistilled predecessors when a new session is created.</td></tr>
+      <tr><td><code>JG_DISTILL_SWEEP_INTERVAL_SEC</code></td><td><code>300</code></td><td>Worker tick cadence (<code>sweep_job</code> re-enqueues itself).</td></tr>
+      <tr><td><code>JG_DISTILL_IDLE_SEC</code></td><td><code>600</code></td><td>Session "done" threshold (age of the newest assistant turn).</td></tr>
+      <tr><td><code>JG_DISTILL_INLINE_MAX_PER_PROCESS</code></td><td><code>1</code></td><td>Cap on inline fallbacks when Redis is unreachable. Resets on process restart.</td></tr>
+      <tr><td colspan="3" style="background:#f8fafc;font-weight:600;font-size:11px;color:#475569;letter-spacing:0.05em;text-transform:uppercase">Tier-2 improver (<a href="#dynamic">&sect;5</a>)</td></tr>
+      <tr><td><code>JG_IMPROVER_THRESHOLD</code></td><td><code>2</code></td><td>Per-tool default failure count that arms the improver; overridable via <code>tool.meta.improve_threshold</code>.</td></tr>
+      <tr><td><code>JG_IMPROVER_MAX_PER_RUN</code></td><td><code>3</code></td><td>Max <code>maybe_improve</code> calls per reflexion run.</td></tr>
     </tbody>
   </table>
   </div>
@@ -1527,6 +1747,13 @@ for name in registry.names():
       <tr><td class="e-name">memory_write</td><td>MemoryItem inserted</td><td>kind, text preview, score</td></tr>
       <tr><td class="e-name">memory_read</td><td><code>memory.search</code> executed</td><td>query, hits count</td></tr>
       <tr><td class="e-name">reflexion</td><td><code>run_reflexion</code> completed</td><td>score, critique, counts</td></tr>
+      <tr><td class="e-name">distillation_queued</td><td>auto-trigger pushed the session onto the RQ queue</td><td>reason (<code>close</code> / <code>idle_sweep</code> / <code>new_session</code>), job_id</td></tr>
+      <tr><td class="e-name">distillation_inline</td><td>auto-trigger ran reflexion inline (Redis unavailable)</td><td>reason, score</td></tr>
+      <tr><td class="e-name">distillation_skipped</td><td>nothing to do, already queued, or inline cap exhausted</td><td>reason, outcome code</td></tr>
+      <tr><td class="e-name">tool_improve_proposed</td><td>improver picked up a tool above threshold</td><td>tool name, failures observed, threshold</td></tr>
+      <tr><td class="e-name">tool_improve_passed</td><td>candidate source passed every test; committed as new version</td><td>tool name, from_version → to_version, sha256</td></tr>
+      <tr><td class="e-name">tool_improve_failed</td><td>candidate rejected (bad JSON, schema changed, tests failed)</td><td>tool name, gate reason, attempt counter</td></tr>
+      <tr><td class="e-name">tool_rollback</td><td><code>store.rollback</code> restored a historical version</td><td>tool name, from_version → to_version</td></tr>
       <tr><td class="e-name">error</td><td>anything wrapped in try/except</td><td>kind, message; never breaks the turn</td></tr>
     </tbody>
   </table>
@@ -1702,6 +1929,7 @@ for name in registry.names():
       <tr><td><span class="m m-post">POST</span></td><td><code>/sessions</code></td><td>Create a session; returns <code>{id}</code>.</td></tr>
       <tr><td><span class="m m-post">POST</span></td><td><code>/sessions/{id}/chat</code></td><td>One synchronous chat turn.</td></tr>
       <tr><td><span class="m m-post">POST</span></td><td><code>/sessions/{id}/distill</code></td><td>Run reflexion (async by default; <code>?sync=true</code> to run inline).</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td><code>/sessions/{id}/close</code></td><td>Signal end-of-session and auto-distill via the trigger funnel (<a href="#reflexion">&sect;8</a>). Disabled when <code>JG_DISTILL_ON_CLOSE=false</code>.</td></tr>
       <tr><td><span class="m m-post">POST</span></td><td><code>/eval/run</code></td><td>Run the regression suite (<code>?only=&lt;task-id&gt;</code> to filter).</td></tr>
       <tr><td><span class="m m-post">POST</span></td><td><code>/memory/search</code></td><td>Vector search over memory.</td></tr>
       <tr><td><span class="m m-post">POST</span></td><td><code>/uploads/{id}</code></td><td>Stream an upload into <code>workspace/sessions/&lt;id&gt;/in/</code>. 50 MiB cap.</td></tr>
@@ -1746,6 +1974,8 @@ for name in registry.names():
       <tr><td><code>new-session</code></td><td>Create + print a session id.</td></tr>
       <tr><td><code>chat "&lt;msg&gt;" [--session &lt;uuid&gt;]</code></td><td>One chat turn from the terminal.</td></tr>
       <tr><td><code>distill &lt;sid&gt; [--sync]</code></td><td>Reflexion loop.</td></tr>
+      <tr><td><code>session close &lt;sid&gt; [--sync]</code></td><td>Manual end-of-session signal &mdash; runs the same auto-trigger funnel as <code>POST /sessions/{id}/close</code>.</td></tr>
+      <tr><td><code>tool list | show | test | diff | rollback | unlock</code></td><td>Inspect and operate on Tier-2 dynamic tools. See <a href="#dynamic">&sect;5</a>.</td></tr>
       <tr><td><code>evalrun [--only &lt;id&gt;]</code></td><td>Regression suite.</td></tr>
       <tr><td><code>analyze-take &lt;audio&gt; [--chart ... --instrument ... --tempo ... --key ...]</code></td><td>Run the music-backend practice-take pipeline. See <a href="#music">&sect;11</a>.</td></tr>
       <tr><td><code>trace &lt;sid&gt;</code></td><td>Dump the JSONL trace.</td></tr>
@@ -1775,6 +2005,41 @@ for name in registry.names():
     <li><strong>External CI / scripts</strong> &mdash; anything that can POST
         and poll. The eval suite is designed to be polled this way for release
         gating.</li>
+  </ul>
+
+  <h3>Blocks Network adapter &mdash;
+    <span class="file"><b>blocks/jazz_guru/</b></span></h3>
+  <p>
+    Optional alternative to the FastAPI server: a
+    <a href="https://github.com/blocksnetwork/blocks-sdk">PubNub Blocks</a>
+    handler that exposes the same core skills (<code>chat</code>,
+    <code>distill</code>, <code>evalrun</code>, <code>render_midi</code>) as
+    a routed RPC. The Blocks runtime calls <code>handler(task, ctx)</code>
+    synchronously; the handler dispatches on a <code>skill</code>
+    discriminator in the request JSON and drives jazz-guru's async
+    coroutines via <code>asyncio.run</code>.
+  </p>
+  <pre><code>{ "skill": "chat",        "message": "...", "session_id"?: "uuid" }
+{ "skill": "distill",     "session_id": "uuid" }
+{ "skill": "evalrun",     "only"?: "task-id" }
+{ "skill": "render_midi", "midi_path": "...", "out_path": "...", ... }</code></pre>
+  <ul>
+    <li><strong>agent card</strong> &mdash;
+        <span class="file">blocks/jazz_guru/<b>agent-card.json</b></span>
+        declares the routed input schema (one entry per skill).</li>
+    <li><strong>per-request engine disposal</strong> &mdash; Blocks invokes
+        the handler via <code>asyncio.run</code> per request, so the cached
+        SQLAlchemy engine from a prior request points at a dead loop on
+        the next call. The handler disposes the engine inside the
+        request's loop and clears the
+        <code>db.get_engine</code> /
+        <code>get_sessionmaker</code> <code>lru_cache</code>s after
+        <code>asyncio.run</code> returns.</li>
+    <li><strong>bootstrap</strong> &mdash; the handler prepends
+        <code>&lt;repo&gt;/src</code> to <code>sys.path</code> and lifts
+        <code>&lt;repo&gt;/.env</code> into <code>os.environ</code> so
+        <code>jazz_guru.config.Settings</code> sees the same secrets it
+        would when run via <code>make server</code>.</li>
   </ul>
 </section>
 
@@ -1845,6 +2110,9 @@ for name in registry.names():
       <tr><td>add or evolve a table</td><td><span class="file">src/jazz_guru/state/<b>schema.py</b></span> + a new alembic revision</td></tr>
       <tr><td>add an evaluation task</td><td>new YAML under <span class="file">eval/tasks/</span></td></tr>
       <tr><td>render a different instrument</td><td><span class="file">data/<b>instruments.yaml</b></span> (via <code>preset_upsert</code>)</td></tr>
+      <tr><td>operate on a Tier-2 tool</td><td><span class="file">src/jazz_guru/<b>cli_tool.py</b></span> &mdash; the <code>jazz-guru tool</code> subcommands. Improver logic in <span class="file">src/jazz_guru/distillation/<b>improver.py</b></span>.</td></tr>
+      <tr><td>tune auto-distillation</td><td><span class="file">src/jazz_guru/distillation/<b>auto.py</b></span> + the <code>JG_DISTILL_*</code> env vars (<a href="#config">&sect;12</a>).</td></tr>
+      <tr><td>expose jazz-guru over Blocks</td><td><span class="file">blocks/jazz_guru/<b>handler.py</b></span> + <span class="file"><b>agent-card.json</b></span></td></tr>
     </tbody>
   </table>
   </div>

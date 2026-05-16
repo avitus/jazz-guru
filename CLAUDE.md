@@ -37,6 +37,7 @@ Operational CLI (use this for ad-hoc agent work, not curl):
 .venv/bin/jazz-guru new-session
 .venv/bin/jazz-guru chat "<msg>" [--session <uuid>]
 .venv/bin/jazz-guru distill <session-uuid> [--sync]   # reflexion loop
+.venv/bin/jazz-guru session close <session-uuid>      # end-of-session signal; auto-distill via trigger funnel
 .venv/bin/jazz-guru evalrun [--only <task-id>]        # regression suite
 .venv/bin/jazz-guru trace <session-uuid>              # JSONL trace dump
 .venv/bin/jazz-guru tool list                         # Tier-2 tools w/ version + test count
@@ -92,6 +93,8 @@ The agent loop is a textbook perceive → plan → act → observe cycle. Stages
 
 - **`distillation/reflexion.py`** — offline reflexion loop. `run_reflexion(session_id)` summarizes the transcript, prompts Claude (with strict JSON contract) for `{score, critique, revised_plan, open_threads, memory_writes, playbook_entries}`, and writes the durable bits back into memory + the playbook table + a fresh snapshot. Triggered async via Redis/RQ (`reflexion_job`) by `make worker`, or inline via `--sync`. After the main reflexion work, `_run_improvement_pass(sid)` mines the trace via `testing.failure_signals` and dispatches `distillation.improver.maybe_improve` for each tool that crossed its threshold (capped per run by `jg_improver_max_per_run`).
 
+- **`distillation/auto.py`** — auto-distillation triggers. Three signals (explicit `close` endpoint/CLI, RQ `sweep_job` idle tick, and a `new_session` predecessor scan fired on every `POST /sessions`) funnel through `maybe_trigger`, which dedups on event markers (`reflexion` / `distillation_queued` / `distillation_inline`) vs the newest assistant turn and serialises concurrent fires per session via a Postgres advisory lock. When Redis is down, falls back to running reflexion inline up to `jg_distill_inline_max_per_process` (default 1, resets on restart). Knobs: `jg_distill_on_close`, `jg_distill_on_new_session`, `jg_distill_sweep_interval_sec` (300 s), `jg_distill_idle_sec` (600 s).
+
 - **`testing/` — Tier-2 tool tests + improvement (see `docs/plans/tier2-tool-tests-and-improvement.md` for the full design).**
   - `predicates.py` — deterministic JSON-tree predicate DSL. Ops: `eq`, `ne`, `gt/gte/lt/lte`, `len` (scalar or nested), `contains`, `regex`, `type`, `absent`, `present`, `all`, `any`. Path syntax with dots, `[N]`, and `[*]` quantifier. No `eval`.
   - `runner.py` — executes a test case against a `DynamicSpec` via the same subprocess sandbox as the tool itself. Reuses `eval.judge` for optional rubric scoring.
@@ -100,7 +103,11 @@ The agent loop is a textbook perceive → plan → act → observe cycle. Stages
 
 - **`distillation/improver.py`** — the auto-publish gate (plan §B.3-B.5). `maybe_improve(name, failures)` calls Claude with a strict-JSON contract (`{source, rationale, new_test_cases, schema_unchanged}`), runs the full existing suite + new cases against the candidate, and only commits via `store.upsert(origin="improver")` when everything passes. `store.upsert` automatically snapshots the prior row into `generated_tool_versions` for one-row rollback. Lock breakers: per-tool `consecutive_failures` counter; reaching `MAX_ATTEMPTS=3` sets `improve_locked`, cleared only via `jazz-guru tool unlock`.
 
-- **`server.py`** — FastAPI app. Routes: `POST /sessions`, `POST /sessions/{id}/chat`, `WS /ws/sessions/{id}/chat` (streams every controller event over the socket), `POST /sessions/{id}/distill`, `POST /memory/search`, `POST /eval/run`, artifact list/download, file uploads. The HTML UI is served from `src/jazz_guru/web/static/` at `/ui/`.
+- **`server.py`** — FastAPI app. Routes: `POST /sessions`, `POST /sessions/{id}/chat`, `WS /ws/sessions/{id}/chat` (streams every controller event over the socket), `POST /sessions/{id}/distill`, `POST /sessions/{id}/close` (end-of-session auto-distill via the trigger funnel), `POST /memory/search`, `POST /eval/run`, `GET /mcp/status`, `POST /mcp/reload`, artifact list/download, file uploads. The HTML UI is served from `src/jazz_guru/web/static/` at `/ui/`, the user manual at `/user_manual/`.
+
+- **`blocks/jazz_guru/`** — optional PubNub Blocks Network adapter. `handler.py` exposes the same skills (`chat` / `distill` / `evalrun` / `render_midi`) as the FastAPI server, routed via a `skill` discriminator in the request JSON. Blocks calls the handler synchronously and drives jazz-guru's async coroutines via `asyncio.run` per request, so the handler disposes the cached SQLAlchemy engine and clears the `db.get_engine` / `get_sessionmaker` `lru_cache`s after every call (asyncpg connections are loop-bound).
+
+- **`lickmatch.py`** + **`actions/tools/lick_match.py`** — read-only surface over the Weimar Jazz Database (`data/wjazzd/wjazzd-index.json`, ODbL). `lick_match(midi_path | notes | intervals+iois)` and `lick_match_info()` are the only sanctioned access path; the agent should not parse the index via `fs_read` / `python_exec`. Every match carries WJazzD attribution (performer + title + year) per the license. Wired into the `music` toolset.
 
 - **`auth.py`** — optional `X-API-Key` middleware. Off unless `JG_API_KEY` is set in the env. `/`, `/health`, `/docs`, `/ui/*` are exempt. WS routes have to call `auth.require_ws(token)` themselves because Starlette middleware does not run for WebSockets.
 
