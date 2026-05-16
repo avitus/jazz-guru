@@ -69,6 +69,9 @@ class MCPManager:
             state.status = "disabled"
             return
         state.status = "starting"
+        # Reset any prior failure string so status() doesn't keep showing the
+        # last cycle's error during this retry window.
+        state.error = None
         attempt = 0
         delay = 0.5
         last_err: Exception | None = None
