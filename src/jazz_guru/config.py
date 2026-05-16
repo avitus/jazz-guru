@@ -219,6 +219,17 @@ class Settings(BaseSettings):
     otel_service_name: str = "jazz-guru"
     otel_exporter_otlp_endpoint: str = ""
 
+    # Tier-2 tool improvement loop (plan §B.7)
+    jg_improver_threshold: int = 2  # per-tool default; overridable in tool meta
+    jg_improver_max_per_run: int = 3  # max maybe_improve calls per reflexion
+
+    # Auto-distillation triggers
+    jg_distill_sweep_interval_sec: int = 300  # worker sweep tick cadence
+    jg_distill_idle_sec: int = 600            # session "done" threshold (last turn age)
+    jg_distill_on_new_session: bool = True    # scan predecessors at new-session creation
+    jg_distill_on_close: bool = True          # fire on explicit close endpoint / CLI
+    jg_distill_inline_max_per_process: int = 1  # cap on inline fallbacks when Redis is down
+
     def ensure_dirs(self) -> None:
         for d in (self.jg_workspace_dir, self.jg_state_dir, self.jg_trace_dir):
             d.mkdir(parents=True, exist_ok=True)

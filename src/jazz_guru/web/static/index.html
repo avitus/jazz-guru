@@ -36,19 +36,19 @@
   <div id="gutter" class="gutter" role="separator" aria-orientation="vertical" aria-label="Resize chat / panels divider" tabindex="0"></div>
 
   <section class="panels">
-    <div class="panel">
-      <header>events</header>
+    <details class="panel" open data-panel="events">
+      <summary>events</summary>
       <div id="events" class="events"></div>
-    </div>
-    <div class="panel">
-      <header>artifacts</header>
+    </details>
+    <details class="panel" open data-panel="artifacts">
+      <summary>artifacts</summary>
       <div id="artifacts" class="artifacts"></div>
-    </div>
-    <div class="panel">
-      <header>score</header>
+    </details>
+    <details class="panel" open data-panel="score">
+      <summary>score</summary>
       <div id="score" class="score"></div>
-    </div>
-    <div class="panel">
+    </details>
+    <div class="panel player-panel">
       <header>player</header>
       <div id="player" class="player">
         <audio id="audio" controls></audio>

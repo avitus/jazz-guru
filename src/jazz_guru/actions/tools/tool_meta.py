@@ -10,12 +10,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import textwrap
 from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from jazz_guru.actions import store
 from jazz_guru.actions.context import current
@@ -30,7 +32,10 @@ from jazz_guru.actions.dynamic import (
     write_session_tool_file,
 )
 from jazz_guru.actions.registry import registry
+from jazz_guru.config import get_settings
+from jazz_guru.db import session_scope
 from jazz_guru.logging import get_logger
+from jazz_guru.state import GeneratedToolTest
 
 log = get_logger(__name__)
 
@@ -174,6 +179,111 @@ async def tool_create(
 # ---------- tool_publish --------------------------------------------------
 
 
+def _find_last_successful_invocation(
+    name: str, session_id: str | None
+) -> dict[str, Any] | None:
+    """Scan the session trace for the most recent successful call to ``name``.
+
+    Returns the input kwargs of the matching call (suitable for replaying
+    as a smoke test), or None if no successful call is recorded. A call is
+    "successful" iff the paired ``tool_result`` event has neither
+    ``ok: False`` nor an ``error`` field — the same shape ``ActionController``
+    emits on the happy path.
+    """
+    if not session_id:
+        return None
+    trace_dir = Path(get_settings().jg_trace_dir).resolve()
+    p = (trace_dir / f"{session_id}.jsonl").resolve()
+    try:
+        p.relative_to(trace_dir)
+    except ValueError:
+        return None
+    if not p.exists():
+        return None
+    records: list[dict[str, Any]] = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict):
+            records.append(rec)
+    # Pair tool_results to tool_uses by id; we want the most recent
+    # tool_use for `name` whose paired result indicates success.
+    results_by_id: dict[str, dict[str, Any]] = {}
+    for rec in records:
+        if rec.get("type") != "tool_result":
+            continue
+        payload = rec.get("payload") or {}
+        rid = payload.get("id")
+        if isinstance(rid, str):
+            results_by_id[rid] = payload
+    for rec in reversed(records):
+        if rec.get("type") != "tool_use":
+            continue
+        payload = rec.get("payload") or {}
+        if payload.get("name") != name:
+            continue
+        tool_use_id = payload.get("id")
+        if not isinstance(tool_use_id, str):
+            continue
+        result = results_by_id.get(tool_use_id)
+        if result is None:
+            continue
+        if result.get("ok") is False or "error" in result:
+            continue
+        input_args = payload.get("input")
+        if isinstance(input_args, dict):
+            return input_args
+        return {}
+    return None
+
+
+async def _record_smoke_case(tool_id: Any, input_args: dict[str, Any]) -> bool:
+    """Idempotently attach a smoke_recorded case to ``tool_id``.
+
+    Replaces any existing smoke_recorded case so re-publishing after a
+    fix updates the smoke baseline rather than letting it drift. Returns
+    True iff a row was upserted.
+    """
+    spec_payload = {
+        "case": {
+            "input": input_args,
+            "predicate": {
+                "result": {"type": "object"},
+                "result.__error__": {"absent": True},
+            },
+        }
+    }
+    case_name = "smoke_recorded"
+    async with session_scope() as s:
+        existing = (
+            await s.execute(
+                select(GeneratedToolTest)
+                .where(GeneratedToolTest.tool_id == tool_id)
+                .where(GeneratedToolTest.name == case_name)
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            s.add(
+                GeneratedToolTest(
+                    tool_id=tool_id,
+                    name=case_name,
+                    spec=spec_payload,
+                    origin="smoke_recorded",
+                    enabled=True,
+                )
+            )
+        else:
+            existing.spec = spec_payload
+            existing.enabled = True
+            existing.origin = "smoke_recorded"
+        await s.flush()
+    return True
+
+
 class ToolPublishInput(BaseModel):
     name: str
     note: str | None = None
@@ -220,10 +330,41 @@ async def tool_publish(name: str, note: str | None = None) -> dict[str, Any]:
         warning = f"published in DB, but failed to mirror generated_tools/{spec.name}.py: {e}"
         log.warning("tool_publish.file_mirror_failed", name=spec.name, err=str(e))
     spec.scope = "global"
+
+    # Record a smoke test from the most recent successful invocation in
+    # this session's trace (plan §A.6). Best-effort: a tool published
+    # without any prior call just won't get one, and the improvement loop
+    # will skip the tool until tests are added manually.
+    smoke_recorded = False
+    try:
+        sid = current().session_id
+        # Trace scanning does blocking file I/O. Offload to a thread so a
+        # large session trace doesn't stall the event loop while publish
+        # is running.
+        last_input = await asyncio.to_thread(
+            _find_last_successful_invocation, spec.name, sid
+        )
+        if last_input is not None:
+            smoke_recorded = await _record_smoke_case(row_id, last_input)
+    except Exception as e:  # never let smoke-recording break a publish
+        log.warning("tool_publish.smoke_recording_failed", name=spec.name, err=str(e))
+
     _emit("tool_promoted", {"name": spec.name, "scope": "global", "id": str(row_id)})
-    out: dict[str, Any] = {"ok": True, "id": str(row_id), "name": spec.name, "scope": "global"}
+    out: dict[str, Any] = {
+        "ok": True,
+        "id": str(row_id),
+        "name": spec.name,
+        "scope": "global",
+        "smoke_recorded": smoke_recorded,
+    }
     if warning:
         out["warning"] = warning
+    if not smoke_recorded:
+        out["tip"] = (
+            "No smoke case was recorded (no successful prior invocation found in "
+            "this session's trace). Authoring at least one tool_test_add case is "
+            "required for the improvement loop to evaluate this tool."
+        )
     return out
 
 

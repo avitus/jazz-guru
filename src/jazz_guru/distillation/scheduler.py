@@ -5,6 +5,7 @@ from typing import Any
 
 from rq import Queue
 
+from jazz_guru.config import get_settings
 from jazz_guru.logging import get_logger
 from jazz_guru.worker import get_redis
 
@@ -39,6 +40,27 @@ def schedule_periodic_reflexion(session_id: uuid.UUID, *, interval_sec: int = 60
         "jazz_guru.distillation.reflexion.reflexion_job",
         str(session_id),
     )
+
+
+def schedule_idle_sweep(*, interval_sec: int | None = None) -> Any:
+    """Enqueue the next idle-sweep tick. Pulls the interval from settings by default.
+
+    Rejects non-positive intervals; with ``seconds <= 0`` the sweep_job
+    would self-reenqueue without delay and busy-loop the queue.
+    """
+    settings = get_settings()
+    seconds = interval_sec if interval_sec is not None else settings.jg_distill_sweep_interval_sec
+    if seconds <= 0:
+        raise ValueError(
+            f"distillation sweep interval must be > 0 seconds (got {seconds})"
+        )
+    q = _queue("distillation")
+    job = q.enqueue_in(
+        timedelta_from_seconds(seconds),
+        "jazz_guru.distillation.auto.sweep_job",
+    )
+    log.info("scheduler.scheduled_idle_sweep", job_id=job.id, in_seconds=seconds)
+    return job
 
 
 def timedelta_from_seconds(seconds: int):

@@ -259,6 +259,15 @@ class ActionController:
                     tr_payload: dict[str, Any] = {"id": tu["id"], "name": tu["name"], "ok": True}
                     if manifest is not None:
                         tr_payload["manifest"] = manifest
+                    # Dynamic tools surface subprocess failures as
+                    # ``{"__error__": "..."}``. The handler didn't raise so
+                    # ``ok`` stays True, but we attach a separate signal so
+                    # the trace-mining failure extractor (improvement loop)
+                    # can distinguish a passthrough-error from real success
+                    # without re-running the tool.
+                    if isinstance(out, dict) and "__error__" in out:
+                        tr_payload["result_has_error"] = True
+                        tr_payload["error_excerpt"] = str(out["__error__"])[:200]
                     self._emit("tool_result", tr_payload)
                 except Exception as e:
                     err = f"{type(e).__name__}: {e}"

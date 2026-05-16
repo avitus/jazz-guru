@@ -86,20 +86,46 @@ body.resizing-cols * { cursor: col-resize !important; }
 }
 #composer input:focus { outline: none; border-color: var(--accent); }
 
-.panels { display: grid; grid-template-rows: 1fr 1fr 1fr 1fr; gap: 12px; min-height: 0; }
+.panels { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .panel {
   display: flex; flex-direction: column;
   background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
   overflow: hidden; min-height: 0;
 }
-.panel > header {
+/* expanded panels share the leftover space; collapsed ones and the player
+   shrink to their content (the player just holds an <audio> + hint). */
+details.panel[open] { flex: 1; }
+details.panel:not([open]) { flex: 0 0 auto; }
+.player-panel { flex: 0 0 auto; }
+
+/* Chrome 131+ wraps everything after <summary> in a ::details-content
+   pseudo (display: block by default) — make it the bounded flex column
+   so the inner panels can scroll. Browsers without the pseudo keep the
+   inner divs as direct flex children, where the same flex rules apply. */
+details.panel::details-content {
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0; overflow: hidden;
+}
+
+.panel > header, .panel > summary {
   padding: 6px 10px; font-size: 11px; text-transform: uppercase;
   letter-spacing: .8px; color: var(--muted); background: #0f1116;
   border-bottom: 1px solid var(--border);
 }
+.panel > summary {
+  cursor: pointer; user-select: none; list-style: none;
+  display: flex; align-items: center; gap: 6px;
+}
+.panel > summary::-webkit-details-marker { display: none; }
+.panel > summary::before {
+  content: "\25be"; font-size: 9px; transition: transform .12s ease;
+}
+details.panel:not([open]) > summary { border-bottom: none; }
+details.panel:not([open]) > summary::before { transform: rotate(-90deg); }
 
 .events {
-  flex: 1; overflow-y: auto; padding: 8px 12px; font: 12px/1.45 ui-monospace, Menlo, monospace;
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 8px 12px; font: 12px/1.45 ui-monospace, Menlo, monospace;
 }
 .events .e { display: flex; gap: 8px; }
 .events .e .ts { color: var(--muted); width: 64px; flex-shrink: 0; }
@@ -110,7 +136,7 @@ body.resizing-cols * { cursor: col-resize !important; }
 .events .e .tag.error      { color: var(--err); }
 .events .e .body { color: var(--text); }
 
-.artifacts { flex: 1; overflow-y: auto; padding: 4px 0; }
+.artifacts { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0; }
 .artifacts a {
   display: flex; gap: 8px; padding: 4px 12px; color: var(--text);
   text-decoration: none; cursor: pointer; font: 12px ui-monospace, Menlo, monospace;
@@ -118,7 +144,7 @@ body.resizing-cols * { cursor: col-resize !important; }
 .artifacts a:hover { background: #1c1f27; color: var(--accent); }
 .artifacts .size { color: var(--muted); width: 70px; text-align: right; }
 
-.score { flex: 1; overflow: auto; background: #fff; }
+.score { flex: 1; min-height: 0; overflow: auto; background: #fff; }
 .score #osmd { display: block; }
 
 .player { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -127,6 +153,5 @@ body.resizing-cols * { cursor: col-resize !important; }
 
 @media (max-width: 1100px) {
   main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
-  .panels { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
   .gutter { display: none; }
 }

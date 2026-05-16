@@ -53,6 +53,12 @@ tools:
   # --- subagent delegation ------------------------------------------------
   delegate_task:         { mode: allow }
 
+  # --- meta-tools: Tier-2 tool tests --------------------------------------
+  tool_test_add:    { mode: allow }
+  tool_test_remove: { mode: allow }
+  tool_test_list:   { mode: allow }
+  tool_test_run:    { mode: allow }
+
 # Loose toolset bundling. Resolution order in Policy.for_tool:
 #   per-name `tools.<name>` entry  ->  toolset that contains the name  ->  default.
 # Per-tool entries above already exist for every built-in; the toolsets section
@@ -64,10 +70,11 @@ toolsets:
   shell:   { tools: [shell, python_exec], mode: allow }
   web:     { tools: [http_get, http_post, web_search], mode: allow }
   code:    { tools: [code_gen], mode: allow }
-  music:   { tools: [music_xml, midi, render_midi, preset_list, preset_get, preset_upsert, preset_delete, build_backing_track, generate_exercise, generate_music], mode: allow }
+  music:   { tools: [music_xml, midi, render_midi, preset_list, preset_get, preset_upsert, preset_delete, build_backing_track, generate_exercise, generate_music, lick_match, lick_match_info], mode: allow }
   audio:   { tools: [audio_analyze, tts, analyze_practice_take], mode: allow }
   vision:  { tools: [vision], mode: allow }
   meta:    { tools: [tool_create, tool_publish, tool_remove, tool_promote_to_source, tool_list_dynamic, tool_inspect], mode: allow }
+  testing: { tools: [tool_test_add, tool_test_remove, tool_test_list, tool_test_run], mode: allow }
 
 budgets:
   per_turn:

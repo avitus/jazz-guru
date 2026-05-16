@@ -17,6 +17,7 @@ workspace/
 !workspace/.gitkeep
 *.sqlite
 *.db
+!data/wjazzd/wjazzd.db
 .DS_Store
 .idea/
 .vscode/
