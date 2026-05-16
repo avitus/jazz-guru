@@ -95,6 +95,14 @@ class MCPManager:
                 )
                 with contextlib.suppress(Exception):
                     await client.stop()
+                # Reset any partial state the try-block may have already
+                # written — e.g. client.start() succeeded but
+                # bridge_server_to_registry() raised, leaving state.client
+                # pointing at a now-stopped client.
+                state.client = None
+                state.tool_count = 0
+                state.bridged_tools = []
+                state.status = "starting"
                 await asyncio.sleep(delay)
                 delay = min(delay * 2.0, 5.0)
         state.status = "failed"
