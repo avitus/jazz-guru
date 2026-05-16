@@ -87,24 +87,7 @@
               "title": "Post-processing chain (render_midi)",
               "description": "ffmpeg filter overrides; merged on top of preset defaults."
             }
-          },
-          "oneOf": [
-            {
-              "properties": {"skill": {"const": "chat"}},
-              "required": ["message"]
-            },
-            {
-              "properties": {"skill": {"const": "distill"}},
-              "required": ["session_id"]
-            },
-            {
-              "properties": {"skill": {"const": "evalrun"}}
-            },
-            {
-              "properties": {"skill": {"const": "render_midi"}},
-              "required": ["midi_path", "out_path"]
-            }
-          ]
+          }
         }
       }
     ],
