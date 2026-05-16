@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -102,8 +101,24 @@ class MCPManager:
                     attempt=attempt,
                     err=str(e),
                 )
-                with contextlib.suppress(Exception):
+                try:
                     await client.stop()
+                except Exception as stop_exc:
+                    # If rollback fails, the client may still be live but we
+                    # have lost the handle. Bail out of the retry loop and
+                    # surface the rollback failure so a caller can investigate
+                    # — retrying would just stack duplicate processes/bridges.
+                    log.warning(
+                        "mcp.server.rollback_failed",
+                        name=name,
+                        attempt=attempt,
+                        err=str(stop_exc),
+                    )
+                    state.status = "failed"
+                    state.error = (
+                        f"failed to roll back MCP client after start failure: {stop_exc}"
+                    )
+                    return
                 # Reset any partial state the try-block may have already
                 # written — e.g. client.start() succeeded but
                 # bridge_server_to_registry() raised, leaving state.client
@@ -124,14 +139,23 @@ class MCPManager:
             await self._stop_one(name)
 
     async def reload(self) -> None:
-        """Re-read mcp.yaml from disk and reconcile (stop removed, start new)."""
+        """Re-read mcp.yaml from disk and reconcile (stop removed, start new).
+
+        If ``_stop_one`` fails to fully tear down a server (status left as
+        ``"failed"`` with preserved client/bridged_tools handles), we keep the
+        old state in place rather than popping or replacing it — otherwise we
+        would lose the only handle to the still-live resources and could stack
+        a new server on top of them.
+        """
         new_cfg = load_mcp_config()
         new_names = {s.name for s in new_cfg.servers}
         # Stop servers no longer in config.
         for name in list(self.states):
             if name not in new_names:
                 await self._stop_one(name)
-                self.states.pop(name, None)
+                current = self.states.get(name)
+                if current is not None and current.status != "failed":
+                    self.states.pop(name, None)
         # Add new ones; restart changed ones.
         for spec in new_cfg.servers:
             existing = self.states.get(spec.name)
@@ -140,6 +164,12 @@ class MCPManager:
                 await self._start_one(spec.name)
             elif existing.spec != spec:
                 await self._stop_one(spec.name)
+                stopped = self.states.get(spec.name)
+                if stopped is not None and stopped.status == "failed":
+                    # Teardown failed — leave the preserved handles alone
+                    # rather than discard them and start a new server over
+                    # the still-live old one.
+                    continue
                 self.states[spec.name] = MCPServerState(spec=spec)
                 await self._start_one(spec.name)
             # else: unchanged, leave running
