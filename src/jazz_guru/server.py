@@ -29,6 +29,7 @@ from jazz_guru.eval import run_all
 from jazz_guru.harness import AgentLoop, SessionManager
 from jazz_guru.logging import get_logger
 from jazz_guru.memory import get_memory
+from jazz_guru.observability import init_sentry
 from jazz_guru.state import list_session_artifacts
 
 log = get_logger(__name__)
@@ -557,6 +558,7 @@ app = create_app()
 
 
 def run() -> None:
+    init_sentry()
     s = get_settings()
     uvicorn.run("jazz_guru.server:app", host=s.jg_host, port=s.jg_port, reload=False)
 

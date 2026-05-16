@@ -41,6 +41,8 @@ dependencies = [
     "opentelemetry-api>=1.25",
     "opentelemetry-sdk>=1.25",
     "opentelemetry-instrumentation-fastapi>=0.46b0",
+    # >=2.30 covers enable_logs + profile_lifecycle="trace" (continuous profiling)
+    "sentry-sdk>=2.30",
 
     # embeddings (default: Voyage AI; OpenAI optional)
     "voyageai>=0.2.3",

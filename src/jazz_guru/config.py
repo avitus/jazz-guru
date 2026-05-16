@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -218,6 +218,23 @@ class Settings(BaseSettings):
     # Telemetry
     otel_service_name: str = "jazz-guru"
     otel_exporter_otlp_endpoint: str = ""
+
+    # Sentry. DSNs are public-facing tokens (also embedded in browser JS) so
+    # a default is committed; override via .env or set sentry_dsn="" to
+    # disable. init_sentry() is a no-op when the DSN is empty, which keeps
+    # tests / forks quiet by default if the operator opts out.
+    sentry_dsn: str = (
+        "https://624346481dee584ffa2ebde75afbeb88@o135479.ingest.us.sentry.io/4511401433890816"
+    )
+    sentry_environment: str = "dev"
+    # PII (request headers, user IP, LLM inputs/outputs) and structured-log
+    # forwarding default to OFF here per Sentry's privacy guidance — opt in
+    # via .env (.env.example sets both true for this project's dev profile).
+    sentry_send_default_pii: bool = False
+    sentry_enable_logs: bool = False
+    sentry_traces_sample_rate: float = 1.0
+    sentry_profile_session_sample_rate: float = 1.0
+    sentry_profile_lifecycle: Literal["manual", "trace"] = "trace"
 
     # Tier-2 tool improvement loop (plan §B.7)
     jg_improver_threshold: int = 2  # per-tool default; overridable in tool meta
