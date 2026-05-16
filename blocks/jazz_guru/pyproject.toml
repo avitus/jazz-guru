@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# Distinct from the parent `jazz-guru` package to avoid PEP 503 name
+# collision when both are installed in the same venv. The Blocks Network
+# agent name (see agent-card.json `identity.agentName`) is still
+# `jazz_guru` — this only renames the Python distribution metadata.
+name = "jazz-guru-blocks-agent"
+version = "0.1.0"
+description = "Blocks Network adapter exposing jazz-guru chat/distill/evalrun/render_midi over the Blocks runtime."
+requires-python = ">=3.12"
+dependencies = [
+    "blocks-network",
+]
+
+[tool.setuptools]
+py-modules = ["handler"]
