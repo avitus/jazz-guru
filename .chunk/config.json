@@ -1,0 +1,15 @@
+{
+  "commands": [
+    {
+      "name": "test",
+      "run": "make test",
+      "role": "gate",
+      "timeout": 300,
+      "limit": 3
+    }
+  ],
+  "vcs": {
+    "org": "avitus",
+    "repo": "jazz-guru"
+  }
+}

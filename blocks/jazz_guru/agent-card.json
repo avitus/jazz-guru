@@ -1,0 +1,146 @@
+{
+  "identity": {
+    "agentName": "jazz_guru",
+    "displayName": "jazz_guru",
+    "description": "Music + text agent harness with chat, reflexion, eval, and MIDI rendering.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "jazz_guru"
+    },
+    "repositoryUrl": "https://github.com/blocksnetwork/blocks-sdk"
+  },
+  "capabilities": {
+    "taskKinds": ["request"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "request",
+        "description": "Routed call to a jazz-guru skill. Set `skill` to one of chat | distill | evalrun | render_midi and provide the per-skill fields.",
+        "contentType": "application/json",
+        "required": true,
+        "example": {
+          "skill": "chat",
+          "message": "Hello, jazz-guru."
+        },
+        "schema": {
+          "type": "object",
+          "required": ["skill"],
+          "properties": {
+            "skill": {
+              "type": "string",
+              "title": "Skill",
+              "enum": ["chat", "distill", "evalrun", "render_midi"],
+              "default": "chat"
+            },
+            "message": {
+              "type": "string",
+              "title": "Message (chat)",
+              "description": "User message for the chat skill."
+            },
+            "session_id": {
+              "type": "string",
+              "title": "Session ID",
+              "description": "Existing jazz-guru session UUID. Optional for chat/render_midi (auto-created if absent), required for distill."
+            },
+            "title": {
+              "type": "string",
+              "title": "Session title (chat)",
+              "description": "Optional title when chat auto-creates a session."
+            },
+            "only": {
+              "type": "string",
+              "title": "Eval task filter (evalrun)",
+              "description": "Run a single eval task by id; omit to run the full regression suite."
+            },
+            "midi_path": {
+              "type": "string",
+              "title": "MIDI path (render_midi)",
+              "description": "MIDI file path relative to the session workspace."
+            },
+            "out_path": {
+              "type": "string",
+              "title": "Output path (render_midi)",
+              "description": "Output audio path (.wav / .flac / .mp3) relative to the session workspace."
+            },
+            "sample_rate": {
+              "type": "integer",
+              "title": "Sample rate (render_midi)",
+              "default": 44100
+            },
+            "instrument": {
+              "type": "string",
+              "title": "Instrument preset (render_midi)",
+              "description": "Preset name from data/instruments.yaml."
+            },
+            "engine": {
+              "type": "string",
+              "title": "Engine (render_midi)",
+              "enum": ["fluidsynth", "sfizz", "liquidsfz"]
+            },
+            "soundfont": {
+              "type": "string",
+              "title": "Soundfont/library (render_midi)"
+            },
+            "post_process": {
+              "type": "object",
+              "title": "Post-processing chain (render_midi)",
+              "description": "ffmpeg filter overrides; merged on top of preset defaults."
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "result",
+        "description": "Skill-specific JSON envelope. Always includes `skill`; chat adds `session_id` + `text` + `usage`; distill adds `score` + `critique`; evalrun adds `result`; render_midi adds `result.path`.",
+        "contentType": "application/json",
+        "guaranteed": true
+      }
+    ]
+  },
+  "skills": [
+    {
+      "id": "chat",
+      "name": "Chat",
+      "description": "Send one turn through AgentLoop; auto-creates a session if none is supplied.",
+      "examples": [
+        "{\"skill\":\"chat\",\"message\":\"List your tools.\"}",
+        "{\"skill\":\"chat\",\"message\":\"Render workspace/in.mid to out.wav with the jazz_organ preset.\"}"
+      ]
+    },
+    {
+      "id": "distill",
+      "name": "Distill (reflexion)",
+      "description": "Run the offline reflexion loop on an existing session.",
+      "examples": [
+        "{\"skill\":\"distill\",\"session_id\":\"<uuid>\"}"
+      ]
+    },
+    {
+      "id": "evalrun",
+      "name": "Eval run",
+      "description": "Run the regression suite (or a single task via `only`).",
+      "examples": [
+        "{\"skill\":\"evalrun\"}",
+        "{\"skill\":\"evalrun\",\"only\":\"hello_world\"}"
+      ]
+    },
+    {
+      "id": "render_midi",
+      "name": "Render MIDI",
+      "description": "Render a MIDI file to audio using a preset or explicit engine + library.",
+      "examples": [
+        "{\"skill\":\"render_midi\",\"midi_path\":\"input.mid\",\"out_path\":\"output.wav\",\"instrument\":\"jazz_organ\"}"
+      ]
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.py",
+    "handlerExport": "handler",
+    "concurrency": 1,
+    "expectedInstances": 1,
+    "maxRunningTimeSec": 300
+  }
+}
