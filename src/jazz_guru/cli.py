@@ -221,6 +221,42 @@ def viewer(host: str = "127.0.0.1", port: int = 8765) -> None:
     uvicorn.run("jazz_guru.logging.viewer.app:app", host=host, port=port)
 
 
+@app.command("analyze-take")
+def analyze_take(
+    audio_path: str = typer.Argument(..., help="Audio file (.wav/.flac/.m4a/.mp3)."),
+    chart: str = typer.Option(None, "--chart", help="Chart/tune name."),
+    instrument: str = typer.Option(None, "--instrument", help="Performer's instrument, e.g. tenor-sax."),
+    lead_sheet: str = typer.Option(None, "--lead-sheet", help="Optional lead-sheet path."),
+    expected_key: str = typer.Option(None, "--key", help="Chart key, e.g. 'G minor'."),
+    expected_tempo: float = typer.Option(None, "--tempo", help="Chart tempo (BPM)."),
+) -> None:
+    """Run the music-backend pipeline against a practice take and print feedback."""
+    from jazz_guru.music import analyze_practice_take, available_backends
+
+    async def _run() -> dict[str, object]:
+        feedback = await analyze_practice_take(
+            Path(audio_path),
+            chart=chart,
+            instrument=instrument,
+            lead_sheet_path=Path(lead_sheet) if lead_sheet else None,
+            expected_key=expected_key,
+            expected_tempo_bpm=expected_tempo,
+        )
+        return feedback.model_dump(exclude_none=True, mode="json")
+
+    out = asyncio.run(_run())
+    console.print(Panel.fit(json.dumps(out, indent=2, default=str), title="analyze-take"))
+
+    backends = available_backends()
+    table = Table(title="music backends")
+    table.add_column("name")
+    table.add_column("available")
+    table.add_column("install hint")
+    for name, row in backends.items():
+        table.add_row(name, "yes" if row.get("available") else "no", str(row.get("install_hint") or "-"))
+    console.print(table)
+
+
 @app.command()
 def tui(
     server: str = typer.Option("http://127.0.0.1:8000", "--server", "-S", help="Server base URL."),
@@ -250,6 +286,86 @@ def mic_devices() -> None:
     for d in devs:
         table.add_row(str(d["index"]), d["name"], str(d["channels"]), str(d["samplerate"]))
     console.print(table)
+
+
+mcp_app = typer.Typer(no_args_is_help=True, help="MCP server management")
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.command("list")
+def mcp_list() -> None:
+    """List configured MCP servers (from config/mcp.yaml)."""
+    from jazz_guru.actions.mcp import load_mcp_config
+
+    cfg = load_mcp_config()
+    if not cfg.servers:
+        console.print(
+            "[yellow]no MCP servers configured[/yellow] "
+            "(add a 'mcp_servers:' block to config/mcp.yaml)"
+        )
+        return
+    table = Table(title="mcp servers (configured)")
+    table.add_column("name")
+    table.add_column("transport")
+    table.add_column("enabled")
+    table.add_column("endpoint")
+    table.add_column("filters")
+    for s in cfg.servers:
+        endpoint = s.command if s.is_stdio() else s.url
+        inc = ",".join(s.include_tools) if s.include_tools else "(all)"
+        exc = ",".join(s.exclude_tools) if s.exclude_tools else "-"
+        table.add_row(
+            s.name, s.transport, str(s.enabled), str(endpoint), f"include={inc}; exclude={exc}"
+        )
+    console.print(table)
+
+
+@mcp_app.command("status")
+def mcp_status(
+    server: str = typer.Option(
+        "http://127.0.0.1:8000", "--server", help="jazz-guru-server base URL"
+    ),
+    api_key: str = typer.Option(None, "--api-key", help="X-API-Key value if JG_API_KEY is set"),
+) -> None:
+    """Query the running server's MCP manager state."""
+    import httpx
+
+    headers = {"X-API-Key": api_key} if api_key else {}
+    try:
+        r = httpx.get(f"{server.rstrip('/')}/mcp/status", headers=headers, timeout=5.0)
+        r.raise_for_status()
+        payload = r.json()
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]{server} returned {e.response.status_code}: {e.response.text[:200]}[/red]")
+        raise typer.Exit(code=1) from e
+    except (httpx.HTTPError, ValueError) as e:
+        console.print(f"[red]could not reach {server}: {e}[/red]")
+        raise typer.Exit(code=1) from e
+    console.print(Panel.fit(json.dumps(payload, indent=2), title="mcp status"))
+
+
+@mcp_app.command("reload")
+def mcp_reload(
+    server: str = typer.Option(
+        "http://127.0.0.1:8000", "--server", help="jazz-guru-server base URL"
+    ),
+    api_key: str = typer.Option(None, "--api-key", help="X-API-Key value if JG_API_KEY is set"),
+) -> None:
+    """Reload config/mcp.yaml on the running server."""
+    import httpx
+
+    headers = {"X-API-Key": api_key} if api_key else {}
+    try:
+        r = httpx.post(f"{server.rstrip('/')}/mcp/reload", headers=headers, timeout=30.0)
+        r.raise_for_status()
+        payload = r.json()
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]{server} returned {e.response.status_code}: {e.response.text[:200]}[/red]")
+        raise typer.Exit(code=1) from e
+    except (httpx.HTTPError, ValueError) as e:
+        console.print(f"[red]could not reach {server}: {e}[/red]")
+        raise typer.Exit(code=1) from e
+    console.print(Panel.fit(json.dumps(payload, indent=2), title="mcp reload"))
 
 
 def main() -> None:

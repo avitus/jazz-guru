@@ -135,6 +135,7 @@ def test_ollama_probe_accepts_https(monkeypatch: pytest.MonkeyPatch) -> None:
     assert why == "ok"
 
 
+
 # ---------- OllamaProvider.embed ----------
 
 

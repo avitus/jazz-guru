@@ -12,9 +12,15 @@ tools:
   http_post:      { mode: allow, max_result_bytes: 8000 }
   python_exec:    { mode: allow, timeout_sec: 30, mem_mb: 512, max_result_bytes: 4000 }
   code_gen:       { mode: allow, scope: workspace }
+  code_edit:      { mode: allow, scope: workspace }
+  patch:          { mode: allow, scope: workspace }
   web_search:     { mode: allow }
   vision:         { mode: allow }
   audio_analyze:  { mode: allow }
+  analyze_practice_take: { mode: allow }
+  build_backing_track:  { mode: allow }
+  generate_exercise:    { mode: allow }
+  generate_music:       { mode: allow }
   music_xml:      { mode: allow }
   midi:           { mode: allow }
   render_midi:    { mode: allow }
@@ -27,6 +33,25 @@ tools:
   tool_remove:           { mode: allow }
   tool_list_dynamic:     { mode: allow }
   tool_inspect:          { mode: allow }
+
+  # --- notes: always-loaded persistent facts ------------------------------
+  notes_read:            { mode: allow }
+  notes_write:           { mode: allow }
+  notes_patch:           { mode: allow }
+
+  # --- productivity tools -------------------------------------------------
+  process:               { mode: allow }
+  todo:                  { mode: allow }
+  clarify:               { mode: allow }
+  session_search:        { mode: allow }
+
+  # --- skills: SKILL.md procedural memory ---------------------------------
+  skills_list:           { mode: allow }
+  skill_view:            { mode: allow }
+  skill_manage:          { mode: allow }
+
+  # --- subagent delegation ------------------------------------------------
+  delegate_task:         { mode: allow }
 
   # --- meta-tools: Tier-2 tool tests --------------------------------------
   tool_test_add:    { mode: allow }
@@ -45,8 +70,8 @@ toolsets:
   shell:   { tools: [shell, python_exec], mode: allow }
   web:     { tools: [http_get, http_post, web_search], mode: allow }
   code:    { tools: [code_gen], mode: allow }
-  music:   { tools: [music_xml, midi, render_midi, preset_list, preset_get, preset_upsert, preset_delete, lick_match, lick_match_info], mode: allow }
-  audio:   { tools: [audio_analyze, tts], mode: allow }
+  music:   { tools: [music_xml, midi, render_midi, preset_list, preset_get, preset_upsert, preset_delete, build_backing_track, generate_exercise, generate_music, lick_match, lick_match_info], mode: allow }
+  audio:   { tools: [audio_analyze, tts, analyze_practice_take], mode: allow }
   vision:  { tools: [vision], mode: allow }
   meta:    { tools: [tool_create, tool_publish, tool_remove, tool_promote_to_source, tool_list_dynamic, tool_inspect], mode: allow }
   testing: { tools: [tool_test_add, tool_test_remove, tool_test_list, tool_test_run], mode: allow }
