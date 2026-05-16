@@ -411,7 +411,10 @@ async def test_sweep_idle_triggers_only_idle_sessions(
             for r in results
             if r.outcome == auto.TriggerOutcome.QUEUED
         )
-        assert captured == [sid_idle]
+        # captured may contain unrelated idle sessions from prior runs sharing
+        # the DB; only assert membership for the sessions this test created.
+        assert sid_idle in captured
+        assert sid_fresh not in captured
     finally:
         await _delete_session(sid_idle)
         await _delete_session(sid_fresh)
