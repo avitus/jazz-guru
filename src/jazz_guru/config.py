@@ -227,8 +227,11 @@ class Settings(BaseSettings):
         "https://624346481dee584ffa2ebde75afbeb88@o135479.ingest.us.sentry.io/4511401433890816"
     )
     sentry_environment: str = "dev"
-    sentry_send_default_pii: bool = True
-    sentry_enable_logs: bool = True
+    # PII (request headers, user IP, LLM inputs/outputs) and structured-log
+    # forwarding default to OFF here per Sentry's privacy guidance — opt in
+    # via .env (.env.example sets both true for this project's dev profile).
+    sentry_send_default_pii: bool = False
+    sentry_enable_logs: bool = False
     sentry_traces_sample_rate: float = 1.0
     sentry_profile_session_sample_rate: float = 1.0
     sentry_profile_lifecycle: str = "trace"
