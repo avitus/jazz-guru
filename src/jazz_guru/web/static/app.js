@@ -339,6 +339,9 @@
     ui.msgs.innerHTML = '';
     ui.events.innerHTML = '';
     ui.artifacts.innerHTML = '';
+    if (osmd) {
+      try { osmd.clear(); } catch {}
+    }
     ui.score.innerHTML = '';
     osmd = null; // force renderScore to re-init against the cleared #score div
     ui.label.textContent = 'no session';
