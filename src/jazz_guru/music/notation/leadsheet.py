@@ -57,7 +57,10 @@ def load_leadsheet(path: Path) -> LeadSheet:
 
     suffix = p.suffix.lower()
     if suffix in {".txt", ".chords", ".md"}:
-        text = p.read_text(encoding="utf-8")
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return LeadSheet(title=p.stem, source_path=p)
         return LeadSheet(
             title=p.stem,
             chord_changes=_parse_chord_text(text),

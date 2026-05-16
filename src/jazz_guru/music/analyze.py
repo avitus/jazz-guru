@@ -137,12 +137,17 @@ def _pitch_feedback(
 
     if detected:
         notes.append(f"detected key: {detected}")
-    if expected and detected and expected.lower() not in detected.lower():
-        notes.append(
-            f"detected key '{detected}' does not match the chart's expected key '{expected}'."
-        )
-    elif expected and detected:
-        notes.append(f"detected key matches the chart's '{expected}'.")
+    if expected and detected:
+        # Normalize "C major" / "c MAJOR" / "C  major" to compare on pitch+mode
+        # equality. Substring matching falsely flagged e.g. "C" inside "C# minor".
+        expected_norm = " ".join(expected.strip().lower().split()[:2])
+        detected_norm = " ".join(detected.strip().lower().split()[:2])
+        if expected_norm != detected_norm:
+            notes.append(
+                f"detected key '{detected}' does not match the chart's expected key '{expected}'."
+            )
+        else:
+            notes.append(f"detected key matches the chart's '{expected}'.")
 
     return PitchFeedback(detected_key=detected, notes=notes)
 

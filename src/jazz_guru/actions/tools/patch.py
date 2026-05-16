@@ -115,7 +115,7 @@ def _do_fuzzy(
     if n > len(text_lines):
         return None
     best_ratio = 0.0
-    best_start = -1
+    best_starts: list[int] = []
     matcher = difflib.SequenceMatcher(autojunk=False)
     matcher.set_seq1(find)
     for start in range(len(text_lines) - n + 1):
@@ -124,9 +124,15 @@ def _do_fuzzy(
         r = matcher.ratio()
         if r > best_ratio:
             best_ratio = r
-            best_start = start
-    if best_start < 0 or best_ratio < min_ratio:
+            best_starts = [start]
+        elif r == best_ratio and best_ratio > 0:
+            best_starts.append(start)
+    # Fail closed (like exact / line-trimmed strategies) when the score is
+    # below the threshold OR multiple equally-good windows exist — silently
+    # editing the first tie would risk corrupting the wrong block.
+    if best_ratio < min_ratio or len(best_starts) != 1:
         return None
+    best_start = best_starts[0]
     indent = _leading_ws(text_lines[best_start])
     repl_lines = _apply_indent(replace, indent)
     repl_lines = _align_trailing_newline(repl_lines, text_lines[best_start + n - 1])

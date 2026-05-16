@@ -15,6 +15,10 @@ from pydantic import BaseModel, Field
 
 from jazz_guru.actions.registry import registry
 
+_MAX_OPTIONS = 4
+_MAX_OPTION_LENGTH = 64
+_MAX_HEADER_LENGTH = 12
+
 
 class ClarifyInput(BaseModel):
     question: str = Field(..., description="The question to ask the operator.")
@@ -55,11 +59,13 @@ async def clarify(
     multi: bool = False,
     header: str | None = None,
 ) -> dict[str, Any]:
+    opts = [str(o)[:_MAX_OPTION_LENGTH] for o in (options or [])][:_MAX_OPTIONS]
+    hdr = header[:_MAX_HEADER_LENGTH] if header else None
     return {
         "__clarify__": {
             "question": question,
-            "options": list(options) if options else [],
+            "options": opts,
             "multi": bool(multi),
-            "header": header,
+            "header": hdr,
         }
     }

@@ -82,7 +82,12 @@ class MusicFlamingoBackend(BaseBackend):
 
     @classmethod
     def _probe(cls) -> None:
-        import transformers  # type: ignore[import-untyped]  # noqa: F401
+        # transformers >= 5.0 is required; earlier versions import cleanly but
+        # lack AudioFlamingo3ForConditionalGeneration, so the probe must
+        # verify the class itself, not just the package.
+        from transformers import (  # type: ignore[import-untyped]
+            AudioFlamingo3ForConditionalGeneration,  # noqa: F401
+        )
 
     # ------------------------------------------------------------------
     # model load + inference (kept narrow so tests can monkeypatch)
@@ -102,7 +107,7 @@ class MusicFlamingoBackend(BaseBackend):
             raise self._unavailable(
                 "this version of transformers does not expose "
                 "AudioFlamingo3ForConditionalGeneration; "
-                "upgrade transformers >= 4.50 or pin a release that includes the class"
+                "upgrade transformers >= 5.0 or pin a release that includes the class"
             ) from exc
 
         processor = AutoProcessor.from_pretrained(model_id)

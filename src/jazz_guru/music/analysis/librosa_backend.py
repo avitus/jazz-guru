@@ -73,6 +73,13 @@ class LibrosaAnalysisBackend(BaseBackend):
         import librosa  # type: ignore[import-untyped]
         import numpy as np
 
+        audio_path = Path(audio_path)
+        if not audio_path.exists():
+            return BeatTrackingResult(
+                backend=self.name,
+                warnings=[f"audio file not found: {audio_path}"],
+            )
+
         y, sr = self._load(audio_path)
         tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
         beats_sec = librosa.frames_to_time(beats, sr=sr).tolist()
@@ -87,6 +94,13 @@ class LibrosaAnalysisBackend(BaseBackend):
     ) -> MusicAnalysis:
         import librosa  # type: ignore[import-untyped]
         import numpy as np
+
+        audio_path = Path(audio_path)
+        if not audio_path.exists():
+            return MusicAnalysis(
+                backend=self.name,
+                warnings=[f"audio file not found: {audio_path}"],
+            )
 
         y, sr = self._load(audio_path)
         tempo, _ = librosa.beat.beat_track(y=y, sr=sr)

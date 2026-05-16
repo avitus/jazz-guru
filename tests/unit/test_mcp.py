@@ -162,9 +162,9 @@ async def test_bridge_invocation_proxies_to_client(clean_registry) -> None:
         tools=[{"name": "read_file", "description": "read", "input_schema": {}}],
     )
     await rb.bridge_server_to_registry(spec, client)
-    out = await registry.invoke("mcp_fs_read_file", {"path": "/tmp/x"})
+    out = await registry.invoke("mcp_fs_read_file", {"path": "x.txt"})
     assert out["text"].startswith("fs.read_file")
-    assert client.calls == [("read_file", {"path": "/tmp/x"})]
+    assert client.calls == [("read_file", {"path": "x.txt"})]
 
 
 async def test_bridge_skips_collision_with_builtin(

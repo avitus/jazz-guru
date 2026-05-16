@@ -154,6 +154,11 @@ def ii_v_i_exercise(
     melodic content. Useful as a generator for the LLM's
     "give-me-a-lick" flow.
     """
+    if mode not in {"major", "minor"}:
+        raise ValueError(f"unknown mode {mode!r}; expected 'major' or 'minor'")
+    if bars_per_chord < 1:
+        raise ValueError("bars_per_chord must be >= 1")
+
     m21 = _import_music21()
     tonic = m21.pitch.Pitch(target_tonic)
     ii_pitch = tonic.transpose("M2")
@@ -162,7 +167,7 @@ def ii_v_i_exercise(
         ii_sym = f"{ii_pitch.name}m7"
         v_sym = f"{v_pitch.name}7"
         i_sym = f"{tonic.name}Maj7"
-    else:
+    else:  # mode == "minor"
         ii_sym = f"{ii_pitch.name}m7b5"
         v_sym = f"{v_pitch.name}7"
         i_sym = f"{tonic.name}m7"

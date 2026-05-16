@@ -249,19 +249,32 @@ async def run_reflexion(session_id: uuid.UUID) -> ReflectionResult:
     for np in result.notes_patches:
         file = np.get("file")
         raw_op = np.get("op")
-        op = (str(raw_op).lower() if raw_op is not None else "") or (
-            "patch" if "find" in np else "write"
-        )
+        op = str(raw_op or "").strip().lower()
         if not file:
+            continue
+        if op not in {"patch", "write"}:
+            log.warning("reflexion.notes_op_unknown", file=file, op=op or "(missing)")
             continue
         try:
             if op == "patch":
-                patch_notes(str(file), str(np.get("find") or ""), str(np.get("replace") or ""))
-            elif op == "write":
+                find = str(np.get("find") or "")
+                if not find:
+                    log.warning(
+                        "reflexion.notes_patch_skipped",
+                        file=file,
+                        reason="missing find",
+                    )
+                    continue
+                patch_notes(str(file), find, str(np.get("replace") or ""))
+            else:  # op == "write"
+                if "content" not in np:
+                    log.warning(
+                        "reflexion.notes_write_skipped",
+                        file=file,
+                        reason="missing content",
+                    )
+                    continue
                 write_notes(str(file), str(np.get("content") or ""))
-            else:
-                log.warning("reflexion.notes_op_unknown", file=file, op=op)
-                continue
             result.notes_applied += 1
         except NotesError as e:
             log.warning(

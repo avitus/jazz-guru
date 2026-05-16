@@ -293,6 +293,10 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
         if mgr is None:
             return {"ok": False, "error": "MCP manager not initialized"}
         try:
+            # The settings cache is process-wide; without clearing, an MCP
+            # reload would still see the stale .env / YAML values that this
+            # long-lived process started with.
+            get_settings.cache_clear()
             await mgr.reload()
         except Exception as e:
             raise HTTPException(500, f"mcp reload failed: {e}") from e
@@ -489,6 +493,12 @@ a{{color:#1d4ed8;text-decoration:none}} a:hover{{text-decoration:underline}}
                         await chat_q.put(user_text)
             except WebSocketDisconnect:
                 # Wake both consumers so they can stop instead of blocking.
+                await chat_q.put(None)
+                await clarify_q.put(None)
+            except Exception as e:
+                # Any other reader failure also has to unblock the consumers;
+                # otherwise the chat / clarify loops below would await forever.
+                log.warning("ws.reader_error", err=str(e))
                 await chat_q.put(None)
                 await clarify_q.put(None)
 

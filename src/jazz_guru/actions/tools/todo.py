@@ -79,7 +79,7 @@ async def _save_todos(session_id: uuid_mod.UUID, todos: list[dict[str, Any]]) ->
 async def _mutate_todos(
     session_id: uuid_mod.UUID,
     mutator: Callable[[list[dict[str, Any]]], tuple[list[dict[str, Any]], Any]],
-) -> tuple[list[dict[str, Any]], Any]:
+) -> tuple[list[dict[str, Any]] | None, Any]:
     """Read-modify-write in ONE transaction with row locking.
 
     Without ``with_for_update`` two concurrent ``todo add`` calls could each
@@ -100,7 +100,9 @@ async def _mutate_todos(
             )
         ).scalar_one_or_none()
         if row is None:
-            return [], None
+            # Surface as an explicit failure rather than a silent no-op write —
+            # otherwise add/set/clear would report success without persisting.
+            return None, None
         meta = dict(row.meta or {})
         current_list = meta.get("todos", [])
         todos = [t for t in current_list if isinstance(t, dict)]
@@ -148,6 +150,8 @@ async def todo(
             return todos, item
 
         new_todos, added = await _mutate_todos(sid, _mut_add)
+        if new_todos is None:
+            return {"ok": False, "error": f"session not found: {sid}"}
         return {"ok": True, "added": added, "count": len(new_todos)}
 
     if action == "set":
@@ -167,6 +171,8 @@ async def todo(
             return list(materialized), None
 
         new_todos, _ = await _mutate_todos(sid, _mut_set)
+        if new_todos is None:
+            return {"ok": False, "error": f"session not found: {sid}"}
         return {"ok": True, "todos": new_todos, "count": len(new_todos)}
 
     if action in ("start", "complete", "remove"):
@@ -185,6 +191,8 @@ async def todo(
             return todos, todos[idx]
 
         new_todos, target = await _mutate_todos(sid, _mut_id)
+        if new_todos is None:
+            return {"ok": False, "error": f"session not found: {sid}"}
         if target is None:
             return {"ok": False, "error": f"no such id: {id}"}
         if action == "remove":
@@ -195,7 +203,9 @@ async def todo(
         def _mut_clear(todos: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
             return [], len(todos)
 
-        _, prev_count = await _mutate_todos(sid, _mut_clear)
+        new_todos, prev_count = await _mutate_todos(sid, _mut_clear)
+        if new_todos is None:
+            return {"ok": False, "error": f"session not found: {sid}"}
         return {"ok": True, "cleared": prev_count}
 
     return {"ok": False, "error": f"unknown action: {action!r}"}

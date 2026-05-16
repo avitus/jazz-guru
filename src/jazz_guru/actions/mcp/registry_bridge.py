@@ -25,6 +25,21 @@ def _namespaced(server: str, tool: str) -> str:
     return f"mcp_{server_clean}_{tool_clean}"
 
 
+def _normalize_input_schema(schema: Any) -> dict[str, Any]:
+    """Coerce an MCP tool's input_schema into a well-formed JSON Schema dict.
+
+    Remote servers can hand back nulls, lists, or schemas without a ``type``
+    field, which would later trip Anthropic's tool export. Fall back to a
+    permissive object schema and ensure ``type`` is set.
+    """
+    if not isinstance(schema, dict):
+        return {"type": "object"}
+    out = dict(schema)
+    if "type" not in out:
+        out["type"] = "object"
+    return out
+
+
 def _filtered(spec: MCPServerSpec, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     include = spec.include_tools
     exclude = set(spec.exclude_tools or [])
@@ -73,7 +88,7 @@ async def bridge_server_to_registry(
                 )
                 continue
             # Same-named MCP tool re-registration from the same server: replace.
-        schema = t.get("input_schema") or {"type": "object"}
+        schema = _normalize_input_schema(t.get("input_schema"))
         description = t.get("description") or f"MCP tool {name!r} from server {spec.name}"
         if not description.endswith("."):
             description = description + "."

@@ -168,11 +168,21 @@ async def start_background_subprocess(
     )
 
     stdout_fh = stdout_path.open("wb", buffering=0)
-    stderr_fh = stderr_path.open("wb", buffering=0)
+    try:
+        stderr_fh = stderr_path.open("wb", buffering=0)
+    except Exception:
+        with contextlib.suppress(Exception):
+            stdout_fh.close()
+        raise
 
     try:
+        # Apply the macOS sandbox wrapper (JG_OS_SANDBOX=1) so background jobs
+        # honour the same confinement as foreground tool subprocesses.
+        from jazz_guru.actions.sandbox_profile import wrap_subprocess
+
+        wrapped_cmd = wrap_subprocess(list(cmd), cwd)
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
+            *wrapped_cmd,
             cwd=str(cwd),
             stdin=asyncio.subprocess.PIPE,
             stdout=stdout_fh,

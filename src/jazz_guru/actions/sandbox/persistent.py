@@ -110,7 +110,10 @@ class PersistentPythonSession:
             cwd=str(cwd),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            # The REPL captures user stderr into the JSON response; native
+            # C-level writes would otherwise fill an unconsumed pipe and
+            # wedge the subprocess.
+            stderr=asyncio.subprocess.DEVNULL,
         )
         self._started = True
 

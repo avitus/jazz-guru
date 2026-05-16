@@ -69,13 +69,22 @@ def _parse_server(name: str, data: dict[str, Any]) -> MCPServerSpec:
         )
 
     tools_block = data.get("tools") or {}
+    if not isinstance(tools_block, dict):
+        raise MCPError(f"server {name!r}: 'tools' must be a mapping")
+
     include: list[str] | None
-    if isinstance(tools_block, dict) and "include" in tools_block:
-        inc = tools_block.get("include") or []
-        include = [str(x) for x in inc] if inc else []
-    else:
+    raw_include = tools_block.get("include", None)
+    if raw_include is None:
         include = None
-    exclude = [str(x) for x in (tools_block.get("exclude") or [])] if isinstance(tools_block, dict) else []
+    elif isinstance(raw_include, list | tuple):
+        include = [str(x) for x in raw_include]
+    else:
+        raise MCPError(f"server {name!r}: 'tools.include' must be a list")
+
+    raw_exclude = tools_block.get("exclude") or []
+    if not isinstance(raw_exclude, list | tuple):
+        raise MCPError(f"server {name!r}: 'tools.exclude' must be a list")
+    exclude = [str(x) for x in raw_exclude]
 
     # Validate types so bad YAML surfaces a clear MCPError instead of a
     # late TypeError / AttributeError during the coercion.

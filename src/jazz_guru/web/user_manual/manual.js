@@ -2,9 +2,16 @@
   const toc = document.getElementById('toc');
   const tocToggle = document.getElementById('toc-toggle');
   if (tocToggle && toc) {
-    tocToggle.addEventListener('click', () => toc.classList.toggle('open'));
+    tocToggle.setAttribute('aria-expanded', String(toc.classList.contains('open')));
+    tocToggle.addEventListener('click', () => {
+      const open = toc.classList.toggle('open');
+      tocToggle.setAttribute('aria-expanded', String(open));
+    });
     toc.addEventListener('click', (e) => {
-      if (e.target.tagName === 'A') toc.classList.remove('open');
+      if (e.target.closest('a[href^="#"]')) {
+        toc.classList.remove('open');
+        tocToggle.setAttribute('aria-expanded', 'false');
+      }
     });
   }
 

@@ -344,12 +344,18 @@ def _normalize_adjunct_relpath(relpath: str) -> str:
     the adjunct API surface.
     """
     rel = relpath.strip().lstrip("/")
-    top = rel.split("/", 1)[0]
+    parts = [p for p in rel.split("/") if p]
+    if len(parts) < 2:
+        raise SkillsError(
+            "relpath must include a filename under one of "
+            f"{ADJUNCT_DIRS} (e.g. references/foo.md)"
+        )
+    top = parts[0]
     if top not in ADJUNCT_DIRS:
         raise SkillsError(
             f"relpath must start with one of {ADJUNCT_DIRS} (got {top!r})"
         )
-    return rel
+    return "/".join(parts)
 
 
 def write_skill_file(
