@@ -59,6 +59,12 @@ class MCPManager:
 
     async def _start_one(self, name: str) -> None:
         state = self.states[name]
+        # Make _start_one idempotent: a second start_all() (or a reload that
+        # leaves this server unchanged) must not construct a fresh MCPClient
+        # over the top of one that is already starting/running, which would
+        # leak the original client and double-bridge its tools.
+        if state.status in {"starting", "running"}:
+            return
         if not state.spec.enabled:
             state.status = "disabled"
             return
@@ -143,19 +149,36 @@ class MCPManager:
         # Decouple unbridge from client.stop(): if the registry-bridge step
         # fails, we still want to terminate the underlying subprocess /
         # socket so it doesn't leak.
+        unbridge_failed = False
         if state.bridged_tools:
             try:
                 await unbridge_server_from_registry(state.spec.name, state.bridged_tools)
             except Exception as e:
+                unbridge_failed = True
                 log.warning("mcp.unbridge_failed", name=name, err=str(e))
+        stop_failed = False
+        stop_err: str | None = None
         if state.client is not None:
             try:
                 await state.client.stop()
             except Exception as e:
-                log.warning("mcp.client_stop_failed", name=name, err=str(e))
+                stop_failed = True
+                stop_err = str(e)
+                log.warning("mcp.client_stop_failed", name=name, err=stop_err)
+        # If teardown failed, surface it as "failed" and PRESERVE the handles
+        # so a caller can retry — never report a clean stop when registry
+        # entries or subprocesses may still be leaking.
+        if stop_failed:
+            state.status = "failed"
+            state.error = f"failed to stop MCP client: {stop_err}"
+            return
         state.client = None
-        state.status = "stopped"
         state.tool_count = 0
+        if unbridge_failed:
+            state.status = "failed"
+            state.error = "failed to unbridge MCP tools"
+            return
+        state.status = "stopped"
         state.error = None
         state.bridged_tools = []
 
