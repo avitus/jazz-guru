@@ -366,7 +366,10 @@ async def test_scan_predecessors_queues_idle_undistilled(
         queued_sids = {r.session_id for r in queued}
         assert sid_idle in queued_sids
         assert sid_fresh not in queued_sids
-        assert captured == [sid_idle]
+        # captured may contain unrelated idle sessions from prior runs sharing
+        # the DB; only assert membership for the sessions this test created.
+        assert sid_idle in captured
+        assert sid_fresh not in captured
     finally:
         await _delete_session(sid_idle)
         await _delete_session(sid_fresh)
