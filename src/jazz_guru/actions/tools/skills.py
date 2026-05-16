@@ -103,11 +103,17 @@ async def skill_view(
     skill, candidates = _find_skill(name, category)
     if skill is None:
         return {"ok": False, "error": f"no skill named {name!r}"}
-    multi = (
-        [{"name": c.name, "category": c.category} for c in candidates]
-        if len(candidates) > 1
-        else None
-    )
+    if len(candidates) > 1:
+        # Don't return one arbitrary body — force the caller to disambiguate
+        # via `category`. Returning the first match plus a `candidates` list
+        # is easy for the model to misuse.
+        return {
+            "ok": False,
+            "error": (
+                f"multiple skills named {name!r}; retry with an explicit `category`"
+            ),
+            "candidates": [{"name": c.name, "category": c.category} for c in candidates],
+        }
     if path is None:
         return {
             "ok": True,
@@ -117,7 +123,6 @@ async def skill_view(
             "body": skill.body,
             "path": str(skill.path),
             "sha256": skill.sha256,
-            "candidates": multi,
         }
     try:
         content = read_skill_file(skill.category, skill.name, path)
@@ -129,7 +134,6 @@ async def skill_view(
         "category": skill.category,
         "file": path,
         "content": content,
-        "candidates": multi,
     }
 
 

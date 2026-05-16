@@ -29,15 +29,18 @@ def midi_summary(path: Path) -> dict[str, Any]:
 
     mid = mido.MidiFile(str(path))
     tempos: list[int] = []
+    note_on_count = 0
     for track in mid.tracks:
         for msg in track:
             if msg.type == "set_tempo":
                 tempos.append(msg.tempo)
+            elif msg.type == "note_on" and msg.velocity > 0:
+                note_on_count += 1
     return {
         "path": str(path),
         "ticks_per_beat": mid.ticks_per_beat,
         "track_count": len(mid.tracks),
         "length_sec": float(mid.length),
-        "note_on_count": midi_note_count(path),
+        "note_on_count": note_on_count,
         "tempos_us_per_beat": tempos,
     }

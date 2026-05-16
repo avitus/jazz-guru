@@ -147,6 +147,8 @@ class MCPManager:
                 log.warning("mcp.client_stop_failed", name=name, err=str(e))
         state.client = None
         state.status = "stopped"
+        state.tool_count = 0
+        state.error = None
         state.bridged_tools = []
 
     def status(self) -> dict[str, Any]:

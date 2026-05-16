@@ -28,8 +28,8 @@ class TodoInput(BaseModel):
         ...,
         description=(
             "One of: 'list' (show current todos), 'add' (text=...), 'set' "
-            "(items=[{text, status?}]), 'start' (id=...), 'complete' (id=...), "
-            "'remove' (id=...), 'clear'."
+            "(items=[{text, status?}]), 'start' (todo_id=...), 'complete' "
+            "(todo_id=...), 'remove' (todo_id=...), 'clear'."
         ),
     )
     text: str | None = Field(default=None, description="For 'add': the task description.")
@@ -37,7 +37,10 @@ class TodoInput(BaseModel):
         default=None,
         description="For 'set': new list of items as [{text: str, status?: str}].",
     )
-    id: str | None = Field(default=None, description="For 'start'/'complete'/'remove': target id.")
+    todo_id: str | None = Field(
+        default=None,
+        description="For 'start'/'complete'/'remove': target todo id.",
+    )
 
 
 def _new_todo(text: str, status: str = "open") -> dict[str, Any]:
@@ -62,18 +65,6 @@ async def _load_todos(session_id: uuid_mod.UUID) -> list[dict[str, Any]]:
             return []
         todos = row.meta.get("todos", [])
         return [t for t in todos if isinstance(t, dict)]
-
-
-async def _save_todos(session_id: uuid_mod.UUID, todos: list[dict[str, Any]]) -> None:
-    async with session_scope() as s:
-        row = (
-            await s.execute(select(SessionRow).where(SessionRow.id == session_id))
-        ).scalar_one_or_none()
-        if row is None:
-            return
-        meta = dict(row.meta or {})
-        meta["todos"] = todos
-        row.meta = meta
 
 
 async def _mutate_todos(
@@ -118,8 +109,9 @@ async def _mutate_todos(
     "todo",
     description=(
         "Per-session task list. Use to plan multi-step work and track progress. "
-        "Actions: list, add (text=...), set (items=[{text,status?}]), start (id=...), "
-        "complete (id=...), remove (id=...), clear. Statuses: open|in_progress|done."
+        "Actions: list, add (text=...), set (items=[{text,status?}]), start "
+        "(todo_id=...), complete (todo_id=...), remove (todo_id=...), clear. "
+        "Statuses: open|in_progress|done."
     ),
     input_model=TodoInput,
     tags=("control",),
@@ -128,7 +120,7 @@ async def todo(
     action: str,
     text: str | None = None,
     items: list[dict[str, Any]] | None = None,
-    id: str | None = None,
+    todo_id: str | None = None,
 ) -> dict[str, Any]:
     ctx = current()
     if ctx.session_id is None:
@@ -178,11 +170,11 @@ async def todo(
         return {"ok": True, "todos": new_todos, "count": len(new_todos)}
 
     if action in ("start", "complete", "remove"):
-        if not id:
-            return {"ok": False, "error": f"{action} requires 'id'"}
+        if not todo_id:
+            return {"ok": False, "error": f"{action} requires 'todo_id'"}
 
         def _mut_id(todos: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-            idx = next((i for i, t in enumerate(todos) if t.get("id") == id), -1)
+            idx = next((i for i, t in enumerate(todos) if t.get("id") == todo_id), -1)
             if idx < 0:
                 return todos, None
             if action == "remove":
@@ -196,7 +188,7 @@ async def todo(
         if new_todos is None:
             return {"ok": False, "error": f"session not found: {sid}"}
         if target is None:
-            return {"ok": False, "error": f"no such id: {id}"}
+            return {"ok": False, "error": f"no such todo_id: {todo_id}"}
         if action == "remove":
             return {"ok": True, "removed": target, "count": len(new_todos)}
         return {"ok": True, "todo": target}

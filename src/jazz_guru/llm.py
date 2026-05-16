@@ -58,19 +58,6 @@ def get_client() -> anthropic.AsyncAnthropic:
     return anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 
-@retry(
-    reraise=True,
-    stop=stop_after_attempt(4),
-    wait=wait_exponential(multiplier=0.5, min=0.5, max=10),
-    retry=retry_if_exception_type(
-        (
-            anthropic.APIConnectionError,
-            anthropic.APITimeoutError,
-            anthropic.RateLimitError,
-            anthropic.InternalServerError,
-        )
-    ),
-)
 async def complete(
     messages: list[dict[str, Any]],
     *,
@@ -97,6 +84,11 @@ async def complete(
       streamed chunk of a tool-use input
 
     The callback may be sync or async; both are awaited if needed.
+
+    Connection / TLS / 5xx / rate-limit failures BEFORE the first delta are
+    retried inside ``_open_stream``. Errors mid-stream are surfaced to the
+    caller without retry, so ``on_delta`` is never replayed with deltas it
+    has already observed.
     """
     settings = get_settings()
     client = get_client()
@@ -113,7 +105,8 @@ async def complete(
     if tool_choice:
         kwargs["tool_choice"] = tool_choice
 
-    async with client.messages.stream(**kwargs) as stream:
+    manager, stream = await _open_stream(client, kwargs)
+    try:
         if on_delta is not None:
             async for event in stream:
                 payload = _delta_payload(event)
@@ -123,6 +116,8 @@ async def complete(
                 if inspect.isawaitable(ret):
                     await ret
         msg = await stream.get_final_message()
+    finally:
+        await manager.__aexit__(None, None, None)
 
     text_chunks: list[str] = []
     tool_uses: list[dict[str, Any]] = []

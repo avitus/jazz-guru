@@ -43,12 +43,19 @@ def test_complete_uses_streaming_path() -> None:
     cap on the next ``max_tokens`` bump.
     """
     src = inspect.getsource(llm_mod.complete)
-    assert "messages.stream" in src, (
-        "complete() no longer uses messages.stream(...). "
+    open_stream_src = inspect.getsource(llm_mod._open_stream)
+    # complete() now drives streaming via _open_stream() instead of holding the
+    # async context manager itself, so check the helper too.
+    assert "messages.stream" in src or "_open_stream" in src, (
+        "complete() no longer routes through messages.stream(...). "
         "If you switched back to messages.create(...), cap "
         "anthropic_max_tokens at 21333 (per the SDK's non-streaming guard)."
     )
-    assert "messages.create" not in src, (
-        "complete() appears to still call messages.create(...). "
+    assert "messages.stream" in open_stream_src, (
+        "_open_stream() must call client.messages.stream(...) — that is the "
+        "single seam where streaming is enforced for complete()/complete_stream()."
+    )
+    assert "messages.create" not in src and "messages.create" not in open_stream_src, (
+        "complete() / _open_stream() appears to still call messages.create(...). "
         "Streaming is required to avoid the SDK's 10-minute non-streaming guard."
     )

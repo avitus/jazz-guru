@@ -22,9 +22,6 @@ def in_memory_todos(monkeypatch: pytest.MonkeyPatch):
     async def _load(sid):
         return list(store.get(sid, []))
 
-    async def _save(sid, todos):
-        store[sid] = list(todos)
-
     async def _mutate(sid, mutator):
         # Simulate the locking single-transaction path: read current, hand
         # to mutator, write back atomically.
@@ -34,7 +31,6 @@ def in_memory_todos(monkeypatch: pytest.MonkeyPatch):
         return new_todos, extra
 
     monkeypatch.setattr(todo_mod, "_load_todos", _load)
-    monkeypatch.setattr(todo_mod, "_save_todos", _save)
     monkeypatch.setattr(todo_mod, "_mutate_todos", _mutate)
 
     register_all()
@@ -75,16 +71,16 @@ async def test_todo_set_replaces_list(in_memory_todos) -> None:
 async def test_todo_start_and_complete(in_memory_todos) -> None:
     out = await registry.invoke("todo", {"action": "add", "text": "render"})
     tid = out["added"]["id"]
-    started = await registry.invoke("todo", {"action": "start", "id": tid})
+    started = await registry.invoke("todo", {"action": "start", "todo_id": tid})
     assert started["todo"]["status"] == "in_progress"
-    completed = await registry.invoke("todo", {"action": "complete", "id": tid})
+    completed = await registry.invoke("todo", {"action": "complete", "todo_id": tid})
     assert completed["todo"]["status"] == "done"
 
 
 async def test_todo_remove(in_memory_todos) -> None:
     out = await registry.invoke("todo", {"action": "add", "text": "x"})
     tid = out["added"]["id"]
-    removed = await registry.invoke("todo", {"action": "remove", "id": tid})
+    removed = await registry.invoke("todo", {"action": "remove", "todo_id": tid})
     assert removed["ok"] is True
     assert removed["count"] == 0
     listed = await registry.invoke("todo", {"action": "list"})
@@ -101,9 +97,9 @@ async def test_todo_clear(in_memory_todos) -> None:
 
 
 async def test_todo_rejects_missing_id(in_memory_todos) -> None:
-    out = await registry.invoke("todo", {"action": "start", "id": "nope"})
+    out = await registry.invoke("todo", {"action": "start", "todo_id": "nope"})
     assert out["ok"] is False
-    assert "no such id" in out["error"]
+    assert "no such todo_id" in out["error"]
 
 
 async def test_todo_add_requires_text(in_memory_todos) -> None:
