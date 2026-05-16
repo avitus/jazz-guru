@@ -164,7 +164,8 @@ async def _entrypoint(
     try:
         return await runner(payload)
     finally:
-        await get_engine().dispose()
+        if get_engine.cache_info().currsize:
+            await get_engine().dispose()
 
 
 def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> dict[str, Any]:

@@ -10,6 +10,7 @@ the handler returns. Edit `payload` below to exercise other skills:
 """
 
 import base64
+import binascii
 import json
 import threading
 
@@ -44,8 +45,11 @@ def main():
             print("[artifact]", event.raw)
             return
         if ref.kind == "inline" and ref.data:
-            text = base64.b64decode(ref.data).decode()
-            print("[artifact]", text)
+            try:
+                text = base64.b64decode(ref.data).decode("utf-8")
+                print("[artifact]", text)
+            except (binascii.Error, UnicodeDecodeError):
+                print("[artifact] <inline decode failed>")
         else:
             downloaded = session.download_artifact(ref)
             print("[artifact]", downloaded.data.decode())
@@ -58,7 +62,10 @@ def main():
     session.on_artifact(on_artifact)
     session.on_terminal(on_terminal)
 
-    done.wait(timeout=120)
+    if not done.wait(timeout=120):
+        session.close()
+        client.destroy()
+        raise TimeoutError("Timed out waiting for task completion event")
     session.close()
     client.destroy()
 
