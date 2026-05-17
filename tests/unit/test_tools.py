@@ -68,6 +68,58 @@ def test_resolve_in_workspace_blocks_escape(isolated_workspace: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fs_read_can_reach_project_data(
+    isolated_workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Point jg_data_dir at a sibling tmp directory and drop a fake WJazzD file in.
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "wjazzd").mkdir()
+    (data_dir / "wjazzd" / "index.json").write_text('{"hits": 42}')
+    monkeypatch.setattr(get_settings(), "jg_data_dir", data_dir)
+
+    r = register_all()
+    token = set_tool_context(ToolContext(session_id="test"))
+    try:
+        # Relative path under data/ resolves via the project-root anchor.
+        out = await r.invoke("fs_read", {"path": "data/wjazzd/index.json"})
+        assert '"hits": 42' in out["content"]
+
+        # fs_list returns absolute paths for cross-workspace listings.
+        listing = await r.invoke("fs_list", {"path": "data/wjazzd"})
+        assert any(e.endswith("index.json") for e in listing["entries"])
+    finally:
+        from jazz_guru.actions import reset_tool_context
+
+        reset_tool_context(token)
+
+
+@pytest.mark.asyncio
+async def test_fs_write_still_workspace_only(
+    isolated_workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # fs_write must refuse paths that escape the session workspace, even when
+    # the target is an otherwise-readable safe root like data/.
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setattr(get_settings(), "jg_data_dir", data_dir)
+
+    r = register_all()
+    token = set_tool_context(ToolContext(session_id="test"))
+    try:
+        # Absolute path into data/ — fs_read would allow it; fs_write must not.
+        with pytest.raises(PermissionError):
+            await r.invoke(
+                "fs_write",
+                {"path": str(data_dir / "poison.txt"), "content": "no"},
+            )
+    finally:
+        from jazz_guru.actions import reset_tool_context
+
+        reset_tool_context(token)
+
+
+@pytest.mark.asyncio
 async def test_python_exec_runs(isolated_workspace: Path) -> None:
     r = register_all()
     token = set_tool_context(ToolContext(session_id="test"))

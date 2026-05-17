@@ -1,10 +1,12 @@
 """Typed read-only surface for Weimar Jazz Database lick matching.
 
 Lets the agent ask "what does this melodic line sound like / where does it
-come from?" against the WJazzD corpus of transcribed jazz solos. This is the
-only sanctioned path to the index — the agent should not reach for
-``fs_read`` / ``python_exec`` to parse ``data/wjazzd/wjazzd-index.json``
-directly.
+come from?" against the WJazzD corpus of transcribed jazz solos. Prefer this
+for melodic similarity queries — the index uses n-gram interval/IOI features
+that ``fs_read`` of the raw JSON can't compute. For everything else (browsing
+the corpus, reading attribution, custom queries against ``wjazzd.db``), the
+raw files at ``data/wjazzd/`` are now reachable directly via ``fs_read`` /
+``fs_list`` / ``python_exec``.
 
 The WJazzD data is ODbL-licensed: every match carries source attribution
 (performer + title + year) so credit follows the data — see
