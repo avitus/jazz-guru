@@ -1,24 +1,17 @@
 # Sessions log
 
-Running log of working sessions on jazz-guru. One entry per session: date, branch, what we worked on, what landed (or didn't), and anything worth flagging for the next session.
+A rolling record of what we worked on, when. Entries are short. Detail belongs in `notes/` or in the commit/PR history; this file is just an index of work-sessions.
+
+Format per entry: `## YYYY-MM-DD — short title` then 1–5 bullets. Cite commits, PRs, or files where useful. Add a `Carry-forward:` line if there is unfinished work to pick up next session.
 
 ---
 
-## 2026-05-16 — Memory restructure + fresh-start review
+## 2026-05-16 — Memory & CLAUDIUS bootstrap
 
-**Branch:** `feat/sentry-observability` (Sentry work already shipped in 9fa25ec / a4abbe1 / c966c48).
+- User defined a new collaboration protocol (6 points): in-project `MEMORY.md`, a `CLAUDIUS/` folder for sessions + independent notes, a session-opening review ritual, and a session-closing update ritual. The stub at `~/.claude/.../memory/MEMORY.md` is reduced to those 6 points only; the substantive memories live here in the project.
+- Restructured memory storage: consolidated the 4 separate CodeRabbit feedback memories into one workflow entry. Migrated the four standing rules (testing, sidecar validation, PR thread resolution, no branch creation) and the Tier-2 project context into `MEMORY.md`, plus the user-manual route. Removed the now-redundant per-topic stub files from `~/.claude/...`.
+- Created `CLAUDIUS/SESSIONS.md` (this file) and `CLAUDIUS/notes/2026-05-16-first-impressions.md` capturing what struck me on a fresh read of the codebase.
+- Repo state on entry: branch `dev-macbook`, clean. Recent work was CodeRabbit autofix passes and a docs commit (`afa77af`) covering tier-2 testing/improver, auto-distillation, blocks, lick_match. Sentry observability work shipped in `9fa25ec` / `a4abbe1` / `c966c48`.
+- Merged main into `dev` and resolved the parallel-write conflict on `MEMORY.md` + `SESSIONS.md`: kept main's organisational scaffold, folded in `dev`'s more detailed CodeRabbit workflow and the Sentry-incident "no new branches" example, kept main's R1/R2/P1 and `dev`'s user-manual entry.
 
-**What happened**
-- Consolidated 4 separate CodeRabbit feedback memories into one `feedback_coderabbit_workflow.md`.
-- Restructured memory storage at the user's direction: stub at `~/.claude/.../memory/MEMORY.md` (only the 6 bootstrap points); real memory moves into `/Users/avitus/Projects/jazz-guru/MEMORY.md` (bootstrap + 3 migrated memories: CodeRabbit workflow, no-new-branches, user manual route). Deleted the now-orphaned individual memory files from `~/.claude/...`.
-- Stood up this `CLAUDIUS/` folder with `SESSIONS.md` and `NOTES.md`.
-- Did the first fresh-start review (per stub point 4). Initial observations seeded in `NOTES.md`.
-
-**State at session end**
-- Working tree clean except for untracked `.claude/` and `package-lock.json`.
-- Branch `feat/sentry-observability` is the active branch; main has the Sentry PR merge ahead of it via 23e0d10.
-- No work in flight yet on a specific next thing — the user said they'll communicate what we're working on next after reviewing the fresh-start report.
-
-**For next session**
-- Confirm whether `MEMORY.md` and `CLAUDIUS/` should be committed to the repo or left untracked. The user's stated intent ("so they sync and move with the other project files, across time and across devices") strongly implies tracked, but the decision is theirs.
-- Watch whether the bootstrap-instruction reading actually fires reliably at session start. If not, escalate the visibility (e.g. project `CLAUDE.md` line pointing at `MEMORY.md`).
+Carry-forward: user will direct next work. Confirm whether `MEMORY.md` and `CLAUDIUS/` should be committed (stated intent — "sync across devices" — strongly implies yes).
