@@ -30,7 +30,7 @@
             "skill": {
               "type": "string",
               "title": "Skill",
-              "enum": ["chat", "distill", "evalrun", "render_midi"],
+              "enum": ["chat", "score", "distill", "evalrun", "render_midi"],
               "default": "chat"
             },
             "message": {
@@ -116,9 +116,9 @@
       "name": "Write a score",
       "description": "Ask for notation. Lead sheets, comping voicings, melodies, basslines, drum charts — the agent generates MusicXML you can open in MuseScore / Sibelius / Dorico, and can render the same material to audio in the same turn. Hand it a key, tempo, form, and a stylistic direction; it will ship a draft and surface any assumptions it had to make.",
       "examples": [
-        "{\"skill\":\"chat\",\"message\":\"Write a 32-bar lead sheet (AABA) for an original ballad in F minor in the vein of 'My One and Only Love'. Output MusicXML and a piano-only audio preview.\"}",
-        "{\"skill\":\"chat\",\"message\":\"Transcribe this melody by ear-reasoning over the changes, then notate it as MusicXML in concert pitch and a Bb-transposed part for tenor sax.\"}",
-        "{\"skill\":\"chat\",\"message\":\"Generate a walking bass part through the first chorus of 'Stella by Starlight' in Bb, four-to-the-floor, with chromatic approach notes on beat 4 where appropriate. Notate and render.\"}"
+        "{\"skill\":\"score\",\"message\":\"Write a 32-bar lead sheet (AABA) for an original ballad in F minor in the vein of 'My One and Only Love'. Output MusicXML and a piano-only audio preview.\"}",
+        "{\"skill\":\"score\",\"message\":\"Transcribe this melody by ear-reasoning over the changes, then notate it as MusicXML in concert pitch and a Bb-transposed part for tenor sax.\"}",
+        "{\"skill\":\"score\",\"message\":\"Generate a walking bass part through the first chorus of 'Stella by Starlight' in Bb, four-to-the-floor, with chromatic approach notes on beat 4 where appropriate. Notate and render.\"}"
       ]
     },
     {
