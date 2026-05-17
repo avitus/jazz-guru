@@ -2019,10 +2019,18 @@ for name in registry.names():
     discriminator in the request JSON and drives jazz-guru's async
     coroutines via <code>asyncio.run</code>.
   </p>
-  <pre><code>{ "skill": "chat",        "message": "...", "session_id"?: "uuid" }
-{ "skill": "distill",     "session_id": "uuid" }
-{ "skill": "evalrun",     "only"?: "task-id" }
-{ "skill": "render_midi", "midi_path": "...", "out_path": "...", ... }</code></pre>
+  <pre><code>{"skill": "chat",        "message": "Hello"}
+{"skill": "distill",     "session_id": "&lt;uuid&gt;"}
+{"skill": "evalrun"}
+{"skill": "render_midi", "midi_path": "out.mid", "out_path": "out.wav"}</code></pre>
+  <p>
+    <code>session_id</code> is optional for <code>chat</code> and
+    <code>render_midi</code> (auto-created if absent) and required for
+    <code>distill</code>. <code>only</code> is an optional eval-task
+    filter for <code>evalrun</code>. <code>render_midi</code> accepts the
+    full <code>RenderMidiInput</code> field set (<code>engine</code>,
+    <code>sample_rate</code>, <code>instrument</code>, &hellip;).
+  </p>
   <ul>
     <li><strong>agent card</strong> &mdash;
         <span class="file">blocks/jazz_guru/<b>agent-card.json</b></span>

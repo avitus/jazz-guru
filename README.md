@@ -71,7 +71,7 @@ jazz-guru new-session        # mint a session id
 jazz-guru chat <msg>         # one turn (use --session to continue)
 jazz-guru trace <id>         # dump JSONL trace for a session
 jazz-guru distill <id>       # run reflexion (use --sync to skip Redis)
-jazz-guru session close <id> # end-of-session signal; auto-distill via the trigger funnel
+jazz-guru session close <id> [--sync] # end-of-session signal; auto-distill via the trigger funnel
 jazz-guru evalrun            # run the regression suite
 jazz-guru viewer             # local trace viewer on :8765
 jazz-guru analyze-take audio.wav --chart "Autumn Leaves" --instrument tenor-sax  # music backend pipeline

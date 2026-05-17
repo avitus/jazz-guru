@@ -37,7 +37,7 @@ Operational CLI (use this for ad-hoc agent work, not curl):
 .venv/bin/jazz-guru new-session
 .venv/bin/jazz-guru chat "<msg>" [--session <uuid>]
 .venv/bin/jazz-guru distill <session-uuid> [--sync]   # reflexion loop
-.venv/bin/jazz-guru session close <session-uuid>      # end-of-session signal; auto-distill via trigger funnel
+.venv/bin/jazz-guru session close <session-uuid> [--sync]   # end-of-session signal; auto-distill via trigger funnel
 .venv/bin/jazz-guru evalrun [--only <task-id>]        # regression suite
 .venv/bin/jazz-guru trace <session-uuid>              # JSONL trace dump
 .venv/bin/jazz-guru tool list                         # Tier-2 tools w/ version + test count
