@@ -113,6 +113,8 @@ The agent loop is a textbook perceive → plan → act → observe cycle. Stages
 
 - **`logging/`** — structlog + a per-session JSONL trace under `workspace/traces/<sid>.jsonl` written by `TraceWriter`, plus a small uvicorn-based viewer (`jazz-guru viewer`).
 
+- **`observability.py`** — single `init_sentry()` entrypoint. Server, worker, and CLI each call it once on startup, very early (before heavy imports) so import-time failures land in Sentry. No-op when `SENTRY_DSN=""` and silently skipped under pytest (`"pytest" in sys.modules`). The DSN has a committed default (DSNs are public-facing tokens) but PII forwarding (`sentry_send_default_pii`) and stdlib/structlog forwarding (`sentry_enable_logs`) default to **False** in code — `.env.example` flips both to True for this project's dev profile, so forks/operators inherit privacy-conservative defaults unless they explicitly opt in. Tracing + profile sampling default to 1.0; tune via `SENTRY_TRACES_SAMPLE_RATE` / `SENTRY_PROFILE_SESSION_SAMPLE_RATE` if noisy.
+
 - **`eval/`** — trace replay + LLM-as-judge regression suite, runnable via `evalrun` or `POST /eval/run`. Tasks are loaded from `eval/tasks/`.
 
 - **`client/`** — `sdk.py` (typed HTTP/WS client) and `tui.py` (Textual TUI with mic capture).
