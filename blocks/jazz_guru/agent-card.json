@@ -2,7 +2,7 @@
   "identity": {
     "agentName": "jazz_guru",
     "displayName": "jazz_guru",
-    "description": "Music + text agent harness with chat, reflexion, eval, and MIDI rendering.",
+    "description": "A jazz-literate music agent that writes scores, comps over changes, and renders real audio. Ask for a backing track on a standard, a walking bassline through ii–V–I, or a transcription — it produces a MusicXML/MIDI artifact and a rendered take, not just prose.",
     "version": "1.0.0",
     "provider": {
       "organization": "jazz_guru"
@@ -16,12 +16,12 @@
     "inputs": [
       {
         "id": "request",
-        "description": "Routed call to a jazz-guru skill. Set `skill` to one of chat | distill | evalrun | render_midi and provide the per-skill fields.",
+        "description": "Routed call to a jazz-guru capability. Most callers use `skill: \"chat\"` to converse — the agent will compose, arrange, render, transcribe, and analyse as needed. `render_midi` is a direct utility for rendering an existing MIDI file with an instrument preset.",
         "contentType": "application/json",
         "required": true,
         "example": {
           "skill": "chat",
-          "message": "Hello, jazz-guru."
+          "message": "Give me a swung 16-bar backing track for 'Autumn Leaves' in E minor — piano + walking upright bass, medium tempo. Render an MP3."
         },
         "schema": {
           "type": "object",
@@ -30,7 +30,7 @@
             "skill": {
               "type": "string",
               "title": "Skill",
-              "enum": ["chat", "distill", "evalrun", "render_midi"],
+              "enum": ["chat", "score", "distill", "evalrun", "render_midi"],
               "default": "chat"
             },
             "message": {
@@ -94,7 +94,7 @@
     "outputs": [
       {
         "id": "result",
-        "description": "Skill-specific JSON envelope. Always includes `skill`; chat adds `session_id` + `text` + `usage`; distill adds `score` + `critique`; evalrun adds `result`; render_midi adds `result.path`.",
+        "description": "Skill-specific JSON envelope. `chat` returns `session_id` + `text` + `usage` + the artifact paths the agent produced. `render_midi` returns `result.path` for the rendered audio.",
         "contentType": "application/json",
         "guaranteed": true
       }
@@ -103,36 +103,32 @@
   "skills": [
     {
       "id": "chat",
-      "name": "Chat",
-      "description": "Send one turn through AgentLoop; auto-creates a session if none is supplied.",
+      "name": "Make music with you",
+      "description": "Open-ended musical conversation. Ask for a backing track over a standard, a comp through a tricky changes section, a melody in a particular voice, a transcription of an audio clip, or a discussion of a player's vocabulary. The agent produces playable artifacts (MusicXML, MIDI, rendered audio) and explains its choices in concise prose — voice-leading, harmonic function, rhythmic feel.",
       "examples": [
-        "{\"skill\":\"chat\",\"message\":\"List your tools.\"}",
-        "{\"skill\":\"chat\",\"message\":\"Render workspace/in.mid to out.wav with the jazz_organ preset.\"}"
+        "{\"skill\":\"chat\",\"message\":\"Backing track for 'There Will Never Be Another You' in Ab, medium swing, 2 choruses. Piano comping + walking upright bass. Render as MP3.\"}",
+        "{\"skill\":\"chat\",\"message\":\"Comp 8 bars over | Dm7 | G7 | Cmaj7 | A7 | Dm7 | G7 | Cmaj7 | Cmaj7 | in a Bill Evans rootless-voicing style. Render with the Salamander piano.\"}",
+        "{\"skill\":\"chat\",\"message\":\"Find five Coltrane licks from the Weimar Jazz Database that move from a ii7 to a V7alt, and transcribe the best one as MusicXML.\"}"
       ]
     },
     {
-      "id": "distill",
-      "name": "Distill (reflexion)",
-      "description": "Run the offline reflexion loop on an existing session.",
+      "id": "score",
+      "name": "Write a score",
+      "description": "Ask for notation. Lead sheets, comping voicings, melodies, basslines, drum charts — the agent generates MusicXML you can open in MuseScore / Sibelius / Dorico, and can render the same material to audio in the same turn. Hand it a key, tempo, form, and a stylistic direction; it will ship a draft and surface any assumptions it had to make.",
       "examples": [
-        "{\"skill\":\"distill\",\"session_id\":\"<uuid>\"}"
-      ]
-    },
-    {
-      "id": "evalrun",
-      "name": "Eval run",
-      "description": "Run the regression suite (or a single task via `only`).",
-      "examples": [
-        "{\"skill\":\"evalrun\"}",
-        "{\"skill\":\"evalrun\",\"only\":\"hello_world\"}"
+        "{\"skill\":\"score\",\"message\":\"Write a 32-bar lead sheet (AABA) for an original ballad in F minor in the vein of 'My One and Only Love'. Output MusicXML and a piano-only audio preview.\"}",
+        "{\"skill\":\"score\",\"message\":\"Transcribe this melody by ear-reasoning over the changes, then notate it as MusicXML in concert pitch and a Bb-transposed part for tenor sax.\"}",
+        "{\"skill\":\"score\",\"message\":\"Generate a walking bass part through the first chorus of 'Stella by Starlight' in Bb, four-to-the-floor, with chromatic approach notes on beat 4 where appropriate. Notate and render.\"}"
       ]
     },
     {
       "id": "render_midi",
-      "name": "Render MIDI",
-      "description": "Render a MIDI file to audio using a preset or explicit engine + library.",
+      "name": "Render MIDI to audio",
+      "description": "Direct utility: hand it a MIDI file and a preset, get an audio file back. Presets cover General MIDI (FluidSynth) plus sampled real instruments — MTG solo saxes (tenor / alto / soprano / baritone), Salamander Grand Piano, Smolken pizzicato upright bass. Optional ffmpeg post-processing chain (lowpass, vibrato, loudness normalization) is wired in per preset and overridable per call.",
       "examples": [
-        "{\"skill\":\"render_midi\",\"midi_path\":\"input.mid\",\"out_path\":\"output.wav\",\"instrument\":\"jazz_organ\"}"
+        "{\"skill\":\"render_midi\",\"midi_path\":\"solo.mid\",\"out_path\":\"solo.mp3\",\"instrument\":\"tenor-sax-mtg\"}",
+        "{\"skill\":\"render_midi\",\"midi_path\":\"comp.mid\",\"out_path\":\"comp.wav\",\"instrument\":\"salamander-piano\",\"sample_rate\":48000}",
+        "{\"skill\":\"render_midi\",\"midi_path\":\"bassline.mid\",\"out_path\":\"bass.flac\",\"instrument\":\"upright-bass-smolken\",\"post_process\":{\"normalize\":true,\"lowpass_hz\":3000}}"
       ]
     }
   ],
