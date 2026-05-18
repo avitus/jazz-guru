@@ -74,13 +74,32 @@ def _ws_token_and_subproto(ws: WebSocket) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _run_migrations() -> None:
+    """Apply pending alembic migrations. Raises on failure so boot aborts loudly."""
+    from alembic.config import Config
+
+    from alembic import command
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+    cfg = Config(str(project_root / "alembic.ini"))
+    command.upgrade(cfg, "head")
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """Start/stop the MCP manager alongside the FastAPI lifecycle.
+    """Run pending DB migrations, then start/stop the MCP manager.
 
-    Errors during start are logged but don't abort server startup — a misconfigured
-    MCP server shouldn't prevent the rest of the agent from running.
+    Migration failures abort startup — a schema mismatch would corrupt session
+    state. MCP failures are logged but tolerated; a misconfigured MCP server
+    shouldn't prevent the rest of the agent from running.
     """
+    try:
+        await asyncio.to_thread(_run_migrations)
+        log.info("db.migrations_applied")
+    except Exception:
+        log.exception("db.migrations_failed")
+        raise
+
     mgr = MCPManager()
     app.state.mcp = mgr
     try:
