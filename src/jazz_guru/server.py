@@ -32,6 +32,12 @@ from jazz_guru.memory import get_memory
 from jazz_guru.observability import init_sentry
 from jazz_guru.state import list_session_artifacts
 
+# Initialize Sentry once per server process, before create_app() runs at module
+# import time. Catches failures during the FastAPI lifespan (migrations, MCP
+# bootstrap) regardless of whether the process was launched via run() or via
+# `uvicorn jazz_guru.server:app`.
+init_sentry()
+
 log = get_logger(__name__)
 
 WEB_STATIC = Path(__file__).resolve().parent / "web" / "static"
@@ -75,13 +81,22 @@ def _ws_token_and_subproto(ws: WebSocket) -> tuple[str | None, str | None]:
 
 
 def _run_migrations() -> None:
-    """Apply pending alembic migrations. Raises on failure so boot aborts loudly."""
+    """Apply pending alembic migrations. Raises on failure so boot aborts loudly.
+
+    No-op with a warning when ``alembic.ini`` isn't reachable — e.g. a
+    non-editable wheel install that doesn't bundle the migration tree. That's
+    a deployment issue, not a schema mismatch, so we don't abort boot.
+    """
     from alembic.config import Config
 
     from alembic import command
 
     project_root = Path(__file__).resolve().parent.parent.parent
-    cfg = Config(str(project_root / "alembic.ini"))
+    ini_path = project_root / "alembic.ini"
+    if not ini_path.is_file():
+        log.warning("db.migrations_skipped", reason="alembic.ini_not_found", path=str(ini_path))
+        return
+    cfg = Config(str(ini_path))
     command.upgrade(cfg, "head")
 
 
@@ -577,7 +592,8 @@ app = create_app()
 
 
 def run() -> None:
-    init_sentry()
+    # Sentry was initialized at module import time (see top of file); init_sentry
+    # is idempotent but we skip the redundant call to keep "exactly once" obvious.
     s = get_settings()
     uvicorn.run("jazz_guru.server:app", host=s.jg_host, port=s.jg_port, reload=False)
 
