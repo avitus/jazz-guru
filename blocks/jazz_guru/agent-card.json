@@ -99,7 +99,8 @@
       {
         "id": "audio",
         "description": "Audio or MIDI to feed the agent (transcription targets, MIDI to render, reference recordings). The bytes are stored at `workspace/sessions/<sid>/in/<filename>` and surfaced to the agent in the chat message. For `render_midi`, a lone MIDI attachment auto-populates `midi_path`.",
-        "contentTypes": [
+        "contentType": "audio/wav",
+        "accept": [
           "audio/wav",
           "audio/midi",
           "audio/mpeg",
@@ -111,13 +112,8 @@
       },
       {
         "id": "score",
-        "description": "Musical score uploads — MusicXML (uncompressed `.musicxml` or compressed `.mxl`) or generic XML. Stored at `workspace/sessions/<sid>/in/<filename>`; the agent reads them via its `music_xml_*` and `fs_read` tools.",
-        "contentTypes": [
-          "application/vnd.recordare.musicxml+xml",
-          "application/vnd.recordare.musicxml",
-          "application/xml",
-          "text/xml"
-        ],
+        "description": "Musical score uploads — MusicXML (uncompressed `.musicxml` or compressed `.mxl`) or generic XML. Sent as binary (`application/octet-stream`); the platform's file-class catalog does not include MusicXML media types. Stored at `workspace/sessions/<sid>/in/<filename>`; the agent reads them via its `music_xml_*` and `fs_read` tools.",
+        "contentType": "application/octet-stream",
         "required": false
       }
     ],
@@ -130,23 +126,14 @@
       },
       {
         "id": "audio",
-        "description": "Rendered audio and/or generated MIDI from the turn (one artifact per file). MIME types: `audio/wav`, `audio/midi`, `audio/mpeg`, `audio/flac`.",
-        "contentTypes": [
-          "audio/wav",
-          "audio/midi",
-          "audio/mpeg",
-          "audio/flac"
-        ],
+        "description": "Rendered audio and/or generated MIDI from the turn (one artifact per file). Content type varies by render target: `audio/wav` (default), `audio/midi`, `audio/mpeg` (MP3), or `audio/flac`. Inspect each artifact's actual MIME type at delivery.",
+        "contentType": "application/octet-stream",
         "guaranteed": false
       },
       {
         "id": "score",
-        "description": "Generated or transcribed scores (one artifact per file) — `application/vnd.recordare.musicxml+xml`, `application/vnd.recordare.musicxml`, `application/xml`.",
-        "contentTypes": [
-          "application/vnd.recordare.musicxml+xml",
-          "application/vnd.recordare.musicxml",
-          "application/xml"
-        ],
+        "description": "Generated or transcribed scores (one artifact per file). Emitted as binary (`application/octet-stream`); inspect each artifact's actual MIME type at delivery — typically `application/vnd.recordare.musicxml+xml`, `application/vnd.recordare.musicxml`, or `application/xml`.",
+        "contentType": "application/octet-stream",
         "guaranteed": false
       }
     ]
