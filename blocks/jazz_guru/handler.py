@@ -85,7 +85,7 @@ async def _run_chat(payload: dict[str, Any]) -> dict[str, Any]:
     loop = AgentLoop(handle)
     result = await loop.step(message)
     return {
-        "skill": "chat",
+        "skill": payload.get("skill", "chat"),
         "session_id": str(handle.id),
         "text": result.text,
         "tool_calls": result.tool_calls,
@@ -145,6 +145,10 @@ async def _run_render_midi(payload: dict[str, Any]) -> dict[str, Any]:
 
 _DISPATCH: dict[str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]] = {
     "chat": _run_chat,
+    # `score` is a presentational variant of `chat` exposed in the agent card
+    # (notation-focused prompts). Same handler; distinct id keeps the marketplace
+    # contract honest with the card's `skills[]` listing.
+    "score": _run_chat,
     "distill": _run_distill,
     "evalrun": _run_evalrun,
     "render_midi": _run_render_midi,

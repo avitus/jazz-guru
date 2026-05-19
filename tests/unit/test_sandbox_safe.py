@@ -64,3 +64,28 @@ def test_resolve_in_workspace_still_session_only(sandboxed: dict[str, Path]) -> 
     # Reading data/ via the strict resolver is still denied.
     with pytest.raises(PermissionError):
         resolve_in_workspace(str(f), "sid")
+
+
+def test_resolve_in_safe_relative_to_project_root(sandboxed: dict[str, Path]) -> None:
+    # The agent says `data/wjazzd-index.json` (relative); the session workspace
+    # anchor produces a nonexistent path, but the project-root anchor lands on
+    # the real file under data/.
+    target = sandboxed["data"] / "wjazzd-index.json"
+    target.write_text("{}")
+    out = resolve_in_safe("data/wjazzd-index.json", "sid")
+    assert out == target.resolve()
+
+
+def test_resolve_in_safe_workspace_anchor_wins_when_both_exist(
+    sandboxed: dict[str, Path],
+) -> None:
+    # If a file with the same relative path exists in both the session
+    # workspace and under data/, prefer the workspace (anchor order).
+    sid = "sid"
+    session_dir = sandboxed["workspace"] / "sessions" / sid
+    session_dir.mkdir(parents=True)
+    workspace_file = session_dir / "notes.md"
+    workspace_file.write_text("from workspace")
+    (sandboxed["data"] / "notes.md").write_text("from data")
+    out = resolve_in_safe("notes.md", sid)
+    assert out == workspace_file.resolve()
