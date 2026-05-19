@@ -16,7 +16,7 @@
     "inputs": [
       {
         "id": "request",
-        "description": "Routed call to a jazz-guru capability. Most callers use `skill: \"chat\"` to converse — the agent will compose, arrange, render, transcribe, and analyse as needed. `render_midi` is a direct utility for rendering an existing MIDI file with an instrument preset.",
+        "description": "Routed call to a jazz-guru capability. Most callers use `skill: \"chat\"` to converse — the agent will compose, arrange, render, transcribe, and analyse as needed. `render_midi` is a direct utility for rendering an existing MIDI file with an instrument preset. Send file inputs (audio / score) alongside this part using the `audio` or `score` part IDs.",
         "contentType": "application/json",
         "required": true,
         "example": {
@@ -56,7 +56,7 @@
             "midi_path": {
               "type": "string",
               "title": "MIDI path (render_midi)",
-              "description": "MIDI file path relative to the session workspace."
+              "description": "MIDI file path relative to the session workspace. Omit if you're sending the MIDI as an `audio` part — it auto-wires."
             },
             "out_path": {
               "type": "string",
@@ -89,14 +89,65 @@
             }
           }
         }
+      },
+      {
+        "id": "text",
+        "description": "Plain prose for the chat / score skills. If you send only a text part (no `request` JSON), the agent treats it as a `chat` message.",
+        "contentType": "text/plain",
+        "required": false
+      },
+      {
+        "id": "audio",
+        "description": "Audio or MIDI to feed the agent (transcription targets, MIDI to render, reference recordings). The bytes are stored at `workspace/sessions/<sid>/in/<filename>` and surfaced to the agent in the chat message. For `render_midi`, a lone MIDI attachment auto-populates `midi_path`.",
+        "contentTypes": [
+          "audio/wav",
+          "audio/midi",
+          "audio/mpeg",
+          "audio/flac",
+          "audio/x-wav",
+          "application/octet-stream"
+        ],
+        "required": false
+      },
+      {
+        "id": "score",
+        "description": "Musical score uploads — MusicXML (uncompressed `.musicxml` or compressed `.mxl`) or generic XML. Stored at `workspace/sessions/<sid>/in/<filename>`; the agent reads them via its `music_xml_*` and `fs_read` tools.",
+        "contentTypes": [
+          "application/vnd.recordare.musicxml+xml",
+          "application/vnd.recordare.musicxml",
+          "application/xml",
+          "text/xml"
+        ],
+        "required": false
       }
     ],
     "outputs": [
       {
         "id": "result",
-        "description": "Skill-specific JSON envelope. `chat` returns `session_id` + `text` + `usage` + the artifact paths the agent produced. `render_midi` returns `result.path` for the rendered audio.",
+        "description": "JSON envelope summarising the turn: `session_id`, `text` (chat/score), `usage`, plus `artifacts` and `attachments` listing the files produced and received.",
         "contentType": "application/json",
         "guaranteed": true
+      },
+      {
+        "id": "audio",
+        "description": "Rendered audio and/or generated MIDI from the turn (one artifact per file). MIME types: `audio/wav`, `audio/midi`, `audio/mpeg`, `audio/flac`.",
+        "contentTypes": [
+          "audio/wav",
+          "audio/midi",
+          "audio/mpeg",
+          "audio/flac"
+        ],
+        "guaranteed": false
+      },
+      {
+        "id": "score",
+        "description": "Generated or transcribed scores (one artifact per file) — `application/vnd.recordare.musicxml+xml`, `application/vnd.recordare.musicxml`, `application/xml`.",
+        "contentTypes": [
+          "application/vnd.recordare.musicxml+xml",
+          "application/vnd.recordare.musicxml",
+          "application/xml"
+        ],
+        "guaranteed": false
       }
     ]
   },
@@ -104,7 +155,7 @@
     {
       "id": "chat",
       "name": "Make music with you",
-      "description": "Open-ended musical conversation. Ask for a backing track over a standard, a comp through a tricky changes section, a melody in a particular voice, a transcription of an audio clip, or a discussion of a player's vocabulary. The agent produces playable artifacts (MusicXML, MIDI, rendered audio) and explains its choices in concise prose — voice-leading, harmonic function, rhythmic feel.",
+      "description": "Open-ended musical conversation. Ask for a backing track over a standard, a comp through a tricky changes section, a melody in a particular voice, a transcription of an audio clip, or a discussion of a player's vocabulary. Attach a WAV / MIDI / MusicXML file (via the `audio` or `score` part IDs) to have the agent transcribe, analyse, arrange, or render it. The agent produces playable artifacts (MusicXML, MIDI, rendered audio) and explains its choices in concise prose — voice-leading, harmonic function, rhythmic feel.",
       "examples": [
         "{\"skill\":\"chat\",\"message\":\"Backing track for 'There Will Never Be Another You' in Ab, medium swing, 2 choruses. Piano comping + walking upright bass. Render as MP3.\"}",
         "{\"skill\":\"chat\",\"message\":\"Comp 8 bars over | Dm7 | G7 | Cmaj7 | A7 | Dm7 | G7 | Cmaj7 | Cmaj7 | in a Bill Evans rootless-voicing style. Render with the Salamander piano.\"}",
@@ -114,7 +165,7 @@
     {
       "id": "score",
       "name": "Write a score",
-      "description": "Ask for notation. Lead sheets, comping voicings, melodies, basslines, drum charts — the agent generates MusicXML you can open in MuseScore / Sibelius / Dorico, and can render the same material to audio in the same turn. Hand it a key, tempo, form, and a stylistic direction; it will ship a draft and surface any assumptions it had to make.",
+      "description": "Ask for notation. Lead sheets, comping voicings, melodies, basslines, drum charts — the agent generates MusicXML you can open in MuseScore / Sibelius / Dorico, and can render the same material to audio in the same turn. Send an existing MusicXML/MIDI via the `score` or `audio` part IDs to extend, transpose, or rearrange it. Hand it a key, tempo, form, and a stylistic direction; it will ship a draft and surface any assumptions it had to make.",
       "examples": [
         "{\"skill\":\"score\",\"message\":\"Write a 32-bar lead sheet (AABA) for an original ballad in F minor in the vein of 'My One and Only Love'. Output MusicXML and a piano-only audio preview.\"}",
         "{\"skill\":\"score\",\"message\":\"Transcribe this melody by ear-reasoning over the changes, then notate it as MusicXML in concert pitch and a Bb-transposed part for tenor sax.\"}",
@@ -124,7 +175,7 @@
     {
       "id": "render_midi",
       "name": "Render MIDI to audio",
-      "description": "Direct utility: hand it a MIDI file and a preset, get an audio file back. Presets cover General MIDI (FluidSynth) plus sampled real instruments — MTG solo saxes (tenor / alto / soprano / baritone), Salamander Grand Piano, Smolken pizzicato upright bass. Optional ffmpeg post-processing chain (lowpass, vibrato, loudness normalization) is wired in per preset and overridable per call.",
+      "description": "Direct utility: hand it a MIDI file and a preset, get an audio file back. Either pass a `midi_path` already in the session workspace, or attach the .mid/.midi as an `audio` part — it auto-wires to `midi_path`. Presets cover General MIDI (FluidSynth) plus sampled real instruments — MTG solo saxes (tenor / alto / soprano / baritone), Salamander Grand Piano, Smolken pizzicato upright bass. Optional ffmpeg post-processing chain (lowpass, vibrato, loudness normalization) is wired in per preset and overridable per call.",
       "examples": [
         "{\"skill\":\"render_midi\",\"midi_path\":\"solo.mid\",\"out_path\":\"solo.mp3\",\"instrument\":\"tenor-sax-mtg\"}",
         "{\"skill\":\"render_midi\",\"midi_path\":\"comp.mid\",\"out_path\":\"comp.wav\",\"instrument\":\"salamander-piano\",\"sample_rate\":48000}",
