@@ -24,10 +24,19 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from blocks_network import StartTaskMessage
-from blocks_network.types import ArtifactRef, RequestPart
 
-from jazz_guru.config import get_settings
+# The Blocks Network SDK is only installed as part of the
+# `blocks/jazz_guru/` sub-project (see its own `pyproject.toml`), not the
+# main `jazz-guru` package's `[dev]` extras — so this test module is a
+# no-op on CI workers that haven't installed the adapter. Skip cleanly
+# rather than failing import.
+blocks_network = pytest.importorskip("blocks_network")
+blocks_network_types = pytest.importorskip("blocks_network.types")
+StartTaskMessage = blocks_network.StartTaskMessage
+ArtifactRef = blocks_network_types.ArtifactRef
+RequestPart = blocks_network_types.RequestPart
+
+from jazz_guru.config import get_settings  # noqa: E402
 
 # --------------------------------------------------------------------------
 # Module loading — the handler lives outside the `jazz_guru` package, so we
