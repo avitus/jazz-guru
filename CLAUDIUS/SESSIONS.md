@@ -25,3 +25,23 @@ Carry-forward: user will direct next work.
 - Updated `CLAUDE.md` with the `observability.py` architecture bullet. Added `CLAUDIUS/notes/2026-05-16-sentry-observability.md` capturing the design choices worth holding onto (no-op patterns, committed-DSN-but-conservative-PII split, sample-rate defaults, `Literal` typing for pydantic env vars).
 
 Carry-forward: local `dev-macbook` is 10 commits ahead of `origin/dev-macbook`; need user nod to push. The CLAUDE.md / CLAUDIUS notes updates above are uncommitted — separate commit when the user is ready.
+
+---
+
+## 2026-05-17 — DTL1000 augmented-data investigation
+
+- User asked whether `ppquadrat/DigThatLick` (or anything else) bundles note-level musical content for DTL1000, parallel to WJazzD's SQLite of full transcriptions.
+- Surveyed the repo, the full Dig That Lick OSF tree (`buxvr` → Metadata `rqk7z` → 6 sub-components incl. DTL1000 `bwg42`), the Jazzomat downloads page, the QMUL deliverables page, the UK Data Service ReShare entry, and the project's Pattern Similarity Search interface.
+- Conclusion: the ~1,736 monophonic CRNN-extracted solos exist but are **not publicly downloadable** — only exposed via the web UI at `dig-that-lick.hfm-weimar.de/similarity_search/`. The 4 files already in `data/DTL1000/` are the complete public DTL1000 release. Detailed write-up + suggested next moves saved to `CLAUDIUS/notes/2026-05-17-dtl1000-transcriptions-not-public.md`.
+
+Carry-forward: user decided no implementation yet; if/when we proceed, the cheap first step is a `dtl_lookup` metadata-only typed surface (mirroring `lick_match_info`'s shape). Note: `data/DTL1000.zip` (2.2 MB) and `data/DTL1000/` are still untracked in git.
+
+---
+
+## 2026-05-19 — Blocks agent-card validation fix; autofix made autonomous
+
+- `blocks publish` was failing schema validation on `blocks/jazz_guru/agent-card.json`: the IO entries used `contentTypes` (plural) but the Blocks validator only accepts a single `contentType` per input/output. Two passes needed — first to switch to `contentType` + add `accept[]` arrays for file-class inputs, then to discover MusicXML media types aren't in the file-class catalog at all (and `+xml` classifies as form-class, which forbids `accept`). Score input/output ended up collapsed to `application/octet-stream` with MIME guidance moved into the descriptions.
+- Opened PR #38 (`fix/blocks-agent-card-validation` → `main`) with just the single-file fix. CodeRabbit review kicked off; `/autofix 38` will run when it lands.
+- User feedback: don't make them babysit `/autofix` — when CodeRabbit's review is still in progress, poll autonomously instead of exiting with "try again in a few minutes." Wrote up the rule in `CLAUDIUS/notes/2026-05-19-autofix-must-poll-itself.md` and armed a `/loop /autofix 38` with `ScheduleWakeup` at 270s (within the prompt-cache TTL, matches CodeRabbit's typical 2–5 min review). Loop will self-cycle until CodeRabbit posts a review, then run the fix loop and post the summary.
+
+Carry-forward: PR #38 is awaiting CodeRabbit. Autofix loop is polling on its own. The DTL1000 files remain untracked — separate decision when/if the user wants them in git.
